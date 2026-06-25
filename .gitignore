@@ -1,0 +1,24 @@
+# Dependency directories
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+**/dist/
+electron-app/dashboard/
+
+# Environment files (sensitive API keys)
+.env
+.env.local
+.env.*
+**/.env
+**/.env.*
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS Files
+.DS_Store
+Thumbs.db
