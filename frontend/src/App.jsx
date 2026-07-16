@@ -357,6 +357,18 @@ function App() {
     setSummarizing(false);
   };
 
+  const actOnSuggestion = async (meetingId, suggestionId, action) => {
+    try {
+      const res = await fetch(`http://localhost:3001/api/meetings/${meetingId}/suggested/${suggestionId}/${action}`, { method: 'POST' });
+      const result = await res.json();
+      if (result.error) setMeetingError(result.error);
+      await openMeeting(meetingId);
+      if (action === 'approve') await fetchTasks();
+    } catch (err) {
+      setMeetingError('Failed to update suggestion.');
+    }
+  };
+
   const deleteMeeting = async (id) => {
     try {
       await fetch(`http://localhost:3001/api/meetings/${id}`, { method: 'DELETE' });
@@ -401,7 +413,7 @@ function App() {
     <div className="dashboard">
       <header>
         <h1 style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          Work Tracker
+          Scribe
           {meetingActive && (
             <span className="recording-pill" title="Meeting capture is running">
               <span className="recording-dot" /> REC
@@ -732,8 +744,7 @@ function App() {
                     <span style={{ color: 'var(--text-secondary)' }}>started {formatMeetingTime(meetingStatus.meeting.startedAt)}</span>
                     {meetingStatus.capture && (
                       <span className="capture-badges">
-                        {meetingStatus.capture.system && <span className="capture-badge"><Volume2 size={12} /> System audio</span>}
-                        {meetingStatus.capture.mic && <span className="capture-badge"><Mic size={12} /> Microphone</span>}
+                        {meetingStatus.capture.system && <span className="capture-badge"><Volume2 size={12} /> Listening to system audio</span>}
                       </span>
                     )}
                     {meetingStatus.pendingChunks > 0 && (
@@ -746,8 +757,9 @@ function App() {
                   <div className="chat-messages transcript-box">
                     {liveSegments.length === 0 ? (
                       <p style={{ color: 'var(--text-secondary)', padding: '1rem' }}>
-                        Listening... The live transcript will appear here about 20-40 seconds after speech is detected.
-                        No bot joins your call — audio is captured locally from this PC.
+                        Listening to your meeting's audio... The live transcript appears here about 20-40 seconds
+                        after speech is detected. No bot joins the call, the microphone stays off, and the meeting
+                        app can't see this — audio is captured locally from this PC.
                       </p>
                     ) : (
                       liveSegments.map((seg, i) => (
@@ -763,9 +775,10 @@ function App() {
               ) : (
                 <div>
                   <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-                    Capture live meeting context without inviting a bot to the call. Work Tracker records
-                    system audio (what you hear) plus your microphone locally on this PC, streams a live
-                    transcript, and generates an AI summary when you stop.
+                    Capture live meeting context without inviting a bot to the call. Scribe listens to the
+                    system audio of your Zoom/Teams/VooV meeting locally on this PC (microphone stays off),
+                    streams a live transcript, and generates an AI summary with suggested tasks when you stop —
+                    tasks are only added to your list after you approve them.
                   </p>
 
                   {selectedMeeting && (
@@ -801,6 +814,36 @@ function App() {
                             ? 'No speech was captured in this meeting.'
                             : 'No summary yet — click Generate Summary.'}
                         </p>
+                      )}
+                      {(selectedMeeting.suggestedTasks || []).length > 0 && (
+                        <div style={{ marginBottom: '1rem' }}>
+                          <h4 style={{ marginBottom: '0.5rem' }}><CheckCircle size={16} color="#10b981" /> Suggested Tasks <span style={{ color: 'var(--text-secondary)', fontWeight: 400, fontSize: '0.8rem' }}>— added to My Tasks only after you approve</span></h4>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                            {selectedMeeting.suggestedTasks.map(s => (
+                              <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.6rem 0.75rem', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', opacity: s.status === 'dismissed' ? 0.5 : 1 }}>
+                                <span style={{ flex: 1, textDecoration: s.status === 'dismissed' ? 'line-through' : 'none' }}>{s.text}</span>
+                                {s.status === 'suggested' && (
+                                  <>
+                                    <button
+                                      onClick={() => actOnSuggestion(selectedMeeting.id, s.id, 'approve')}
+                                      style={{ background: '#10b981', color: '#fff', border: 'none', padding: '0.3rem 0.75rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}
+                                    >
+                                      Add to My Tasks
+                                    </button>
+                                    <button
+                                      onClick={() => actOnSuggestion(selectedMeeting.id, s.id, 'dismiss')}
+                                      style={{ background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border-color, var(--surface-border))', padding: '0.3rem 0.75rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem' }}
+                                    >
+                                      Dismiss
+                                    </button>
+                                  </>
+                                )}
+                                {s.status === 'added' && <span style={{ color: '#10b981', fontSize: '0.8rem', fontWeight: 600 }}>✓ Added</span>}
+                                {s.status === 'dismissed' && <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Dismissed</span>}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       )}
                       {(selectedMeeting.segments || []).length > 0 && (
                         <details>

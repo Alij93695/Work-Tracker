@@ -1,22 +1,25 @@
-# Work Tracker
+# Scribe
 
-A Windows desktop app that tracks your work automatically in the background and captures
-meetings locally — no bot ever joins your calls.
+Scribe is a Windows desktop app that silently tracks your work in the background and
+listens to your meetings locally — no bot ever joins your calls, and your microphone stays off.
 
 ## Features
 
 - **Background work tracking** — a persistent native watcher streams the foreground window
   once per second; the app logs window switches to daily CSV files and never silently dies
   (watchdog + auto-respawn, crash guards, idle/lock/sleep awareness).
-- **Meetings (no bot required)** — captures Windows **system loopback audio** (whatever you
-  hear in Zoom/Teams/Meet) plus your microphone, locally on your PC. Live transcripts stream
-  to the dashboard every ~20 seconds and an AI summary (key points, decisions, action items)
-  is generated when you stop.
+- **Meetings (listen-only, no bot)** — captures Windows **system loopback audio** (whatever
+  you hear in Zoom/Teams/VooV/Meet) locally on your PC. The microphone is never opened and
+  the meeting app cannot detect the capture. Live transcripts stream to the dashboard every
+  ~20 seconds; stopping generates an AI summary plus **suggested tasks that are only added
+  to your task list after you approve them**.
 - **AI insights** — daily smart summaries, morning action plans, and a chat assistant over
   your activity data (Gemini, with multi-key rotation and model fallback).
 - **Tasks & reminders** — manual task list with desktop notification reminders.
 - **Keep-awake** — while tracking (and especially during meetings) the app holds an OS power
   request so the laptop doesn't sleep mid-capture. Toggle from the tray menu.
+- **Invisible in screen shares** — the dashboard uses Windows content protection, so it is
+  excluded from Zoom/Teams/OBS screen captures (tray toggle).
 
 ## Architecture
 
@@ -32,11 +35,13 @@ electron-app/
     logger.js           Rotating file logger (userData/logs/app.log)
     util.js             Local-time helpers, atomic JSON read/write
   capture/
-    capture.html/.js    Hidden window: loopback + mic → 16kHz WAV chunks → main process
+    capture.html/.js    Hidden window: system loopback → 16kHz WAV chunks → main process
 frontend/               React dashboard (Vite) — built into electron-app/dashboard
 ```
 
-Data lives in `%APPDATA%/electron-app/logs/` (dev) — daily `yyyy-MM-dd.csv` activity logs,
+Data lives in `%APPDATA%/scribe/logs/` (dev) or `%APPDATA%/Scribe/logs/` (installed). On
+first run Scribe copies (never deletes) legacy data from the old `electron-app`/`Work Tracker`
+folders — daily `yyyy-MM-dd.csv` activity logs,
 `meetings/*.json`, `tasks.json`, `summaries.json`, `settings.json`, `app.log`.
 
 ## Setup
@@ -60,13 +65,13 @@ Data lives in `%APPDATA%/electron-app/logs/` (dev) — daily `yyyy-MM-dd.csv` ac
 ## Meetings — how it works
 
 1. Start capture from the tray menu or the dashboard's **Meetings** tab (before or during a call).
-2. A hidden window captures system loopback audio + microphone via WebAudio, mixes them at
-   16 kHz mono, and emits ~20-second WAV chunks. Silent chunks are dropped locally.
+2. A hidden window captures system loopback audio only (mic stays off) via WebAudio at
+   16 kHz mono and emits ~20-second WAV chunks. Silent chunks are dropped locally.
 3. The main process transcribes each chunk with Gemini and appends segments to the live
    transcript (visible in the dashboard within ~20–40 s of speech).
 4. Stop capture → remaining chunks finish transcribing → a Markdown summary (Summary,
-   Key Points, Decisions, Action Items) is generated automatically. Everything is stored
-   locally in `meetings/<id>.json`.
+   Key Points, Decisions, Action Items) is generated automatically, plus suggested tasks
+   you can approve or dismiss. Everything is stored locally in `meetings/<id>.json`.
 
 ## Reliability design
 

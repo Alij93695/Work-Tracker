@@ -27,11 +27,41 @@ process.on('unhandledRejection', (reason) => {
 });
 
 const logsDir = path.join(app.getPath('userData'), 'logs');
+
+// One-time migration: the app used to be named "electron-app" (dev) /
+// "Work Tracker" (installed). Copy — never move or delete — all saved data
+// (daily CSVs, tasks, summaries, meetings, settings) from the legacy
+// locations the first time the renamed app starts.
+let migratedFrom = null;
+(function migrateLegacyData() {
+    try {
+        const hasData = fs.existsSync(logsDir) && fs.readdirSync(logsDir).some(f => f.endsWith('.csv'));
+        if (hasData) return;
+        const appData = app.getPath('appData');
+        const legacyDirs = [
+            path.join(appData, 'electron-app', 'logs'),
+            path.join(appData, 'Work Tracker', 'logs'),
+            path.join(appData, 'work-tracker', 'logs'),
+        ];
+        for (const legacy of legacyDirs) {
+            if (path.resolve(legacy) === path.resolve(logsDir)) continue;
+            if (!fs.existsSync(legacy)) continue;
+            fs.mkdirSync(logsDir, { recursive: true });
+            fs.cpSync(legacy, logsDir, { recursive: true, force: false, errorOnExist: false });
+            migratedFrom = legacy;
+            return;
+        }
+    } catch (e) {
+        console.error('Legacy data migration failed:', e);
+    }
+})();
+
 if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
 log.init(logsDir);
+if (migratedFrom) log.info(`[Migration] Copied legacy data from ${migratedFrom} (originals left untouched).`);
 
 const settingsFile = path.join(logsDir, 'settings.json');
-const settings = Object.assign({ keepAwake: true, launchAtLogin: true }, readJsonSafe(settingsFile, {}));
+const settings = Object.assign({ keepAwake: true, launchAtLogin: true, hideFromScreenShare: true }, readJsonSafe(settingsFile, {}));
 function saveSettings() {
     try { writeJsonSafe(settingsFile, settings); } catch (e) { log.error('Failed to save settings:', e); }
 }
@@ -105,6 +135,9 @@ function createDashboard() {
         },
     });
     dashboardWindow.setMenuBarVisibility(false);
+    // Invisible to screen shares/recordings (Zoom, Teams, VooV, OBS...):
+    // Windows renders the window black/absent in captured frames.
+    dashboardWindow.setContentProtection(settings.hideFromScreenShare);
     dashboardWindow.loadFile(path.join(__dirname, 'dashboard', 'index.html'));
     dashboardWindow.on('closed', () => { dashboardWindow = null; });
 }
@@ -122,14 +155,14 @@ function rebuildTrayMenu() {
                 try {
                     if (meetings.isActive()) {
                         await meetings.stop();
-                        new Notification({ title: 'Work Tracker', body: 'Meeting capture stopped. Summary is being generated.', icon: trayIconPath }).show();
+                        new Notification({ title: 'Scribe', body: 'Meeting capture stopped. Summary is being generated.', icon: trayIconPath }).show();
                     } else {
                         await meetings.start();
-                        new Notification({ title: 'Work Tracker', body: 'Meeting capture started — live transcript available on the dashboard.', icon: trayIconPath }).show();
+                        new Notification({ title: 'Scribe', body: 'Meeting capture started — live transcript available on the dashboard.', icon: trayIconPath }).show();
                     }
                 } catch (err) {
                     log.error('[Tray] Meeting toggle failed:', err);
-                    new Notification({ title: 'Work Tracker', body: `Meeting capture error: ${err.message}`, icon: trayIconPath }).show();
+                    new Notification({ title: 'Scribe', body: `Meeting capture error: ${err.message}`, icon: trayIconPath }).show();
                 }
                 rebuildTrayMenu();
             },
@@ -143,6 +176,16 @@ function rebuildTrayMenu() {
                 settings.keepAwake = item.checked;
                 saveSettings();
                 applyKeepAwake();
+            },
+        },
+        {
+            label: 'Invisible in Screen Shares',
+            type: 'checkbox',
+            checked: settings.hideFromScreenShare,
+            click: (item) => {
+                settings.hideFromScreenShare = item.checked;
+                saveSettings();
+                if (dashboardWindow) dashboardWindow.setContentProtection(settings.hideFromScreenShare);
             },
         },
         {
@@ -161,7 +204,7 @@ function rebuildTrayMenu() {
         { label: 'Quit', click: () => { app.quit(); } },
     ]);
     tray.setContextMenu(contextMenu);
-    tray.setToolTip(meetingActive ? 'Work Tracker — recording meeting' : 'Work Tracker is running');
+    tray.setToolTip(meetingActive ? 'Scribe — recording meeting' : 'Scribe is running');
 }
 
 function applyLoginItem() {
@@ -203,7 +246,7 @@ if (!gotTheLock) {
     app.on('second-instance', () => createDashboard());
 
     app.whenReady().then(() => {
-        log.info(`Work Tracker starting (v${app.getVersion()}, packaged: ${app.isPackaged})`);
+        log.info(`Scribe starting (v${app.getVersion()}, packaged: ${app.isPackaged})`);
 
         ai.init();
         initFirebase();

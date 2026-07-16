@@ -250,6 +250,32 @@ Provide a helpful, concise response. Use Markdown formatting. If they ask for a 
         res.json(meeting);
     });
 
+    // Approve a meeting-suggested task → it gets added to My Tasks.
+    // Nothing is added without this explicit approval.
+    apiApp.post('/api/meetings/:id/suggested/:sid/approve', wrap(async (req, res) => {
+        const meeting = meetings.get(req.params.id);
+        if (!meeting) return res.status(404).json({ error: 'Meeting not found.' });
+        const suggestion = (meeting.suggestedTasks || []).find(s => String(s.id) === String(req.params.sid));
+        if (!suggestion) return res.status(404).json({ error: 'Suggestion not found.' });
+
+        const tasks = readJsonSafe(tasksFile, []);
+        tasks.push({
+            id: Date.now(),
+            text: suggestion.text,
+            completed: false,
+            source: 'meeting',
+            meetingId: meeting.id,
+        });
+        writeJsonSafe(tasksFile, tasks);
+        meetings.setSuggestionStatus(req.params.id, req.params.sid, 'added');
+        res.json({ success: true });
+    }));
+
+    apiApp.post('/api/meetings/:id/suggested/:sid/dismiss', wrap(async (req, res) => {
+        meetings.setSuggestionStatus(req.params.id, req.params.sid, 'dismissed');
+        res.json({ success: true });
+    }));
+
     apiApp.post('/api/meetings/:id/summarize', wrap(async (req, res) => {
         const summary = await meetings.summarize(req.params.id);
         res.json({ success: true, summary });

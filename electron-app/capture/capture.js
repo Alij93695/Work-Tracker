@@ -1,14 +1,13 @@
 // Meeting audio capture (runs in a hidden window).
 //
-// Sources:
-//   1. System loopback audio — everything the machine is playing (the other
-//      side of a Zoom/Teams/Meet call). Preferred path is getDisplayMedia,
-//      which the main process answers with audio:'loopback'; the legacy
-//      chromeMediaSource:'desktop' path is the fallback.
-//   2. Microphone — the user's own voice (optional; capture continues
-//      without it if permission fails).
+// LISTEN-ONLY: the single source is system loopback audio — everything the
+// machine is playing (the meeting audio from Zoom/Teams/VooV/Meet). The
+// microphone is never opened; nothing is recorded from or emitted into the
+// call, and the meeting apps cannot see this capture. Preferred path is
+// getDisplayMedia, which the main process answers with audio:'loopback';
+// the legacy chromeMediaSource:'desktop' path is the fallback.
 //
-// Both sources are mixed by WebAudio at 16 kHz mono, accumulated into ~20s
+// Audio is resampled by WebAudio at 16 kHz mono, accumulated into ~20s
 // PCM chunks, encoded as WAV, and shipped to the main process for
 // transcription. Chunks whose RMS is below the silence threshold are
 // dropped locally so silent stretches never burn API quota.
@@ -83,34 +82,19 @@ async function getSystemAudio() {
     return null;
 }
 
-async function getMicAudio() {
-    try {
-        return await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        });
-    } catch (err) {
-        window.captureAPI.log('Microphone unavailable: ' + err.message);
-        return null;
-    }
-}
-
 async function start() {
     const systemStream = await getSystemAudio();
-    const micStream = await getMicAudio();
 
     const hasSystem = !!(systemStream && systemStream.getAudioTracks().length > 0);
-    const hasMic = !!(micStream && micStream.getAudioTracks().length > 0);
-
-    if (!hasSystem && !hasMic) {
-        window.captureAPI.error('No audio sources available — could not capture system audio or microphone.');
+    if (!hasSystem) {
+        window.captureAPI.error('Could not capture system audio.');
         return;
     }
 
     const ctx = new AudioContext({ sampleRate: TARGET_RATE });
     const processor = ctx.createScriptProcessor(4096, 1, 1);
 
-    if (hasSystem) ctx.createMediaStreamSource(systemStream).connect(processor);
-    if (hasMic) ctx.createMediaStreamSource(micStream).connect(processor);
+    ctx.createMediaStreamSource(systemStream).connect(processor);
 
     // ScriptProcessor only fires when routed to the destination; a zero-gain
     // sink keeps it silent so captured system audio isn't replayed (feedback).
@@ -160,7 +144,7 @@ async function start() {
         if (sampleCount >= TARGET_RATE * CHUNK_SECONDS) flush();
     };
 
-    window.captureAPI.started({ system: hasSystem, mic: hasMic, sampleRate: ctx.sampleRate });
+    window.captureAPI.started({ system: true, mic: false, sampleRate: ctx.sampleRate });
 }
 
 start().catch(err => window.captureAPI.error(err && err.message ? err.message : String(err)));

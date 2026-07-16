@@ -1,7 +1,7 @@
 {
-  "name": "electron-app",
-  "version": "1.0.0",
-  "description": "Automated Work Tracker Desktop Application",
+  "name": "scribe",
+  "version": "2.0.0",
+  "description": "Scribe — silent work tracking and local meeting capture",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -11,11 +11,23 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "build": {
-    "appId": "com.worktracker.app",
-    "productName": "Work Tracker",
+    "appId": "com.scribe.app",
+    "productName": "Scribe",
     "win": {
-      "target": "nsis",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
       "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false
     },
     "extraResources": [
       "ActiveWindow.exe"

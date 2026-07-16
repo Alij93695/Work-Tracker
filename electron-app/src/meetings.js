@@ -88,6 +88,7 @@ class MeetingManager {
 
         this.win = new BrowserWindow({
             show: false,
+            skipTaskbar: true,
             webPreferences: {
                 preload: path.join(__dirname, '..', 'capture', 'capture-preload.js'),
                 backgroundThrottling: false,
@@ -232,7 +233,59 @@ Bulleted list of follow-ups, with owners if mentioned.
         const summary = await ai.generateText(prompt, { label: 'Meeting summary' });
         meeting.summary = summary;
         this.save(meeting);
+
+        // Extract action items as task suggestions. They are NEVER added to
+        // the user's task list automatically — the dashboard shows them with
+        // Approve/Dismiss buttons and only approval adds them.
+        try {
+            await this.extractSuggestedTasks(meeting, transcript);
+        } catch (err) {
+            log.error('[Meeting] Task extraction failed:', err);
+        }
         return summary;
+    }
+
+    async extractSuggestedTasks(meeting, transcript) {
+        const prompt = `
+Below is a meeting transcript. Extract any concrete action items or tasks that were mentioned or assigned.
+
+TRANSCRIPT:
+${transcript}
+
+Respond with ONLY a JSON array of short task strings (no markdown, no code fences, no commentary).
+Example: ["Review the Q3 budget by Friday", "Send the design doc to the team"]
+If there are no action items, respond with: []
+`;
+        const raw = await ai.generateText(prompt, { label: 'Task extraction' });
+        let texts = [];
+        try {
+            const cleaned = String(raw).replace(/```(?:json)?/gi, '').trim();
+            const parsed = JSON.parse(cleaned);
+            if (Array.isArray(parsed)) {
+                texts = parsed.map(t => String(t).trim()).filter(t => t.length > 0 && t.length < 300);
+            }
+        } catch (e) {
+            log.warn('[Meeting] Could not parse task extraction output:', String(raw).slice(0, 200));
+        }
+
+        // Preserve decisions the user already made on identical suggestions
+        const previous = meeting.suggestedTasks || [];
+        meeting.suggestedTasks = texts.map((text, i) => {
+            const prior = previous.find(p => p.text === text && p.status !== 'suggested');
+            return prior || { id: `${meeting.id}-${i}`, text, status: 'suggested' };
+        });
+        this.save(meeting);
+        log.info(`[Meeting] Extracted ${texts.length} suggested task(s) for ${meeting.id}.`);
+    }
+
+    setSuggestionStatus(meetingId, suggestionId, status) {
+        const meeting = (this.current && this.current.id === String(meetingId)) ? this.current : this.load(meetingId);
+        if (!meeting) throw Object.assign(new Error('Meeting not found.'), { status: 404 });
+        const suggestion = (meeting.suggestedTasks || []).find(s => String(s.id) === String(suggestionId));
+        if (!suggestion) throw Object.assign(new Error('Suggestion not found.'), { status: 404 });
+        suggestion.status = status;
+        this.save(meeting);
+        return suggestion;
     }
 
     publicMeeting(meeting) {
