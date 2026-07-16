@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { format, subDays, addDays } from 'date-fns';
-import { Activity, Clock, ChevronLeft, ChevronRight, ChevronDown, Monitor, Sparkles, Sunrise, CheckCircle, Circle, Trash2, Edit2, Save, MessageCircle, Send, Bell, BellOff, X } from 'lucide-react';
+import { Activity, Clock, ChevronLeft, ChevronRight, ChevronDown, Monitor, Sparkles, Sunrise, CheckCircle, Circle, Trash2, Edit2, Save, MessageCircle, Send, Bell, BellOff, X, Mic, Square, FileText, RefreshCw, Volume2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import './index.css';
 
@@ -29,6 +29,16 @@ function App() {
   const [chatLoading, setChatLoading] = useState(false);
   const chatEndRef = useRef(null);
 
+  // Meeting States
+  const [meetingStatus, setMeetingStatus] = useState(null);
+  const [meetingsList, setMeetingsList] = useState([]);
+  const [selectedMeeting, setSelectedMeeting] = useState(null);
+  const [meetingTitle, setMeetingTitle] = useState('');
+  const [meetingBusy, setMeetingBusy] = useState(false);
+  const [summarizing, setSummarizing] = useState(false);
+  const [meetingError, setMeetingError] = useState('');
+  const transcriptEndRef = useRef(null);
+
   useEffect(() => {
     fetchData(date);
     fetchSavedSummary(date);
@@ -43,7 +53,22 @@ function App() {
   useEffect(() => {
     fetchMorningTasks();
     fetchTasks();
+    fetchMeetings();
   }, []);
+
+  // Poll meeting status — keeps the live transcript and recording pill fresh
+  useEffect(() => {
+    fetchMeetingStatus();
+    const interval = setInterval(fetchMeetingStatus, 4000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Auto-scroll the live transcript
+  useEffect(() => {
+    if (transcriptEndRef.current) {
+      transcriptEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [meetingStatus?.meeting?.segments?.length]);
 
   // Auto-scroll chat to bottom
   useEffect(() => {
@@ -248,6 +273,112 @@ function App() {
     setChatLoading(false);
   };
 
+  // Meeting functions
+  const fetchMeetingStatus = async () => {
+    try {
+      const res = await fetch('http://localhost:3001/api/meetings/current');
+      const result = await res.json();
+      setMeetingStatus(result);
+    } catch (err) {
+      // server not up yet — keep last known status
+    }
+  };
+
+  const fetchMeetings = async () => {
+    try {
+      const res = await fetch('http://localhost:3001/api/meetings');
+      setMeetingsList(await res.json());
+    } catch (err) {
+      console.error('Failed to fetch meetings', err);
+    }
+  };
+
+  const startMeeting = async () => {
+    setMeetingBusy(true);
+    setMeetingError('');
+    try {
+      const res = await fetch('http://localhost:3001/api/meetings/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: meetingTitle })
+      });
+      const result = await res.json();
+      if (result.error) setMeetingError(result.error);
+      else {
+        setMeetingTitle('');
+        setSelectedMeeting(null);
+        await fetchMeetingStatus();
+      }
+    } catch (err) {
+      setMeetingError('Failed to reach the local server.');
+    }
+    setMeetingBusy(false);
+  };
+
+  const stopMeeting = async () => {
+    setMeetingBusy(true);
+    setMeetingError('');
+    try {
+      const res = await fetch('http://localhost:3001/api/meetings/stop', { method: 'POST' });
+      const result = await res.json();
+      if (result.error) setMeetingError(result.error);
+      else {
+        await fetchMeetingStatus();
+        await fetchMeetings();
+        if (result.meeting) openMeeting(result.meeting.id);
+      }
+    } catch (err) {
+      setMeetingError('Failed to reach the local server.');
+    }
+    setMeetingBusy(false);
+  };
+
+  const openMeeting = async (id) => {
+    try {
+      const res = await fetch(`http://localhost:3001/api/meetings/${id}`);
+      if (res.ok) setSelectedMeeting(await res.json());
+    } catch (err) {
+      console.error('Failed to load meeting', err);
+    }
+  };
+
+  const summarizeMeeting = async (id) => {
+    setSummarizing(true);
+    setMeetingError('');
+    try {
+      const res = await fetch(`http://localhost:3001/api/meetings/${id}/summarize`, { method: 'POST' });
+      const result = await res.json();
+      if (result.error) setMeetingError(result.error);
+      else await openMeeting(id);
+      await fetchMeetings();
+    } catch (err) {
+      setMeetingError('Failed to generate summary.');
+    }
+    setSummarizing(false);
+  };
+
+  const deleteMeeting = async (id) => {
+    try {
+      await fetch(`http://localhost:3001/api/meetings/${id}`, { method: 'DELETE' });
+      if (selectedMeeting?.id === id) setSelectedMeeting(null);
+      await fetchMeetings();
+    } catch (err) {
+      console.error('Failed to delete meeting', err);
+    }
+  };
+
+  const formatMeetingTime = (isoStr) => {
+    if (!isoStr) return '';
+    try {
+      return format(new Date(isoStr), 'MMM d, h:mm a');
+    } catch {
+      return isoStr;
+    }
+  };
+
+  const meetingActive = !!meetingStatus?.active;
+  const liveSegments = meetingStatus?.meeting?.segments || [];
+
   const formatDuration = (seconds) => {
     if (seconds < 60) return `${Math.round(seconds)}s`;
     const minutes = Math.floor(seconds / 60);
@@ -269,7 +400,14 @@ function App() {
   return (
     <div className="dashboard">
       <header>
-        <h1>Work Tracker</h1>
+        <h1 style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          Work Tracker
+          {meetingActive && (
+            <span className="recording-pill" title="Meeting capture is running">
+              <span className="recording-dot" /> REC
+            </span>
+          )}
+        </h1>
         <div className="date-selector">
           <button onClick={() => setDate(subDays(date, 1))}>
             <ChevronLeft size={20} />
@@ -430,13 +568,22 @@ function App() {
             <Sparkles size={16} />
             <span>Smart Summary</span>
           </button>
-          <button 
+          <button
             type="button"
             className={`tab-btn ${activeTab === 'chat' ? 'active' : ''}`}
             onClick={() => setActiveTab('chat')}
           >
             <MessageCircle size={16} />
             <span>AI Assistant</span>
+          </button>
+          <button
+            type="button"
+            className={`tab-btn ${activeTab === 'meetings' ? 'active' : ''}`}
+            onClick={() => { setActiveTab('meetings'); fetchMeetings(); }}
+          >
+            <Mic size={16} />
+            <span>Meetings</span>
+            {meetingActive && <span className="recording-dot" style={{ marginLeft: '0.35rem' }} />}
           </button>
         </div>
 
@@ -538,6 +685,171 @@ function App() {
                   Send
                 </button>
               </div>
+            </div>
+          )}
+          {activeTab === 'meetings' && (
+            <div className="card" style={{ borderLeft: '4px solid #ef4444', margin: 0 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <h2><Mic size={24} color="#ef4444" /> Meetings</h2>
+                {meetingActive ? (
+                  <button
+                    onClick={stopMeeting}
+                    disabled={meetingBusy}
+                    style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '0.5rem 1.25rem', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}
+                  >
+                    <Square size={16} /> {meetingBusy ? 'Stopping...' : 'Stop & Summarize'}
+                  </button>
+                ) : (
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <input
+                      type="text"
+                      value={meetingTitle}
+                      onChange={(e) => setMeetingTitle(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && startMeeting()}
+                      placeholder="Meeting title (optional)"
+                      style={{ padding: '0.5rem 0.75rem', borderRadius: '8px', border: '1px solid var(--border-color, var(--surface-border))', background: 'var(--card-bg, rgba(0,0,0,0.2))', color: 'var(--text-primary)', width: '220px' }}
+                    />
+                    <button
+                      onClick={startMeeting}
+                      disabled={meetingBusy}
+                      style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '0.5rem 1.25rem', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}
+                    >
+                      <Mic size={16} /> {meetingBusy ? 'Starting...' : 'Start Capture'}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {meetingError && (
+                <p style={{ color: '#ef4444', marginBottom: '1rem' }}>{meetingError}</p>
+              )}
+
+              {meetingActive ? (
+                <div>
+                  <div className="meeting-live-header">
+                    <span className="recording-dot" />
+                    <strong>{meetingStatus.meeting.title}</strong>
+                    <span style={{ color: 'var(--text-secondary)' }}>started {formatMeetingTime(meetingStatus.meeting.startedAt)}</span>
+                    {meetingStatus.capture && (
+                      <span className="capture-badges">
+                        {meetingStatus.capture.system && <span className="capture-badge"><Volume2 size={12} /> System audio</span>}
+                        {meetingStatus.capture.mic && <span className="capture-badge"><Mic size={12} /> Microphone</span>}
+                      </span>
+                    )}
+                    {meetingStatus.pendingChunks > 0 && (
+                      <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>transcribing {meetingStatus.pendingChunks} chunk(s)...</span>
+                    )}
+                  </div>
+                  {meetingStatus.meeting.error && (
+                    <p style={{ color: '#f59e0b', marginBottom: '0.5rem' }}>Capture warning: {meetingStatus.meeting.error}</p>
+                  )}
+                  <div className="chat-messages transcript-box">
+                    {liveSegments.length === 0 ? (
+                      <p style={{ color: 'var(--text-secondary)', padding: '1rem' }}>
+                        Listening... The live transcript will appear here about 20-40 seconds after speech is detected.
+                        No bot joins your call — audio is captured locally from this PC.
+                      </p>
+                    ) : (
+                      liveSegments.map((seg, i) => (
+                        <div key={i} className="transcript-segment">
+                          <div className="transcript-time">{seg.start?.split('T')[1] || ''}</div>
+                          <div className="transcript-text">{seg.text}</div>
+                        </div>
+                      ))
+                    )}
+                    <div ref={transcriptEndRef} />
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+                    Capture live meeting context without inviting a bot to the call. Work Tracker records
+                    system audio (what you hear) plus your microphone locally on this PC, streams a live
+                    transcript, and generates an AI summary when you stop.
+                  </p>
+
+                  {selectedMeeting && (
+                    <div className="card" style={{ marginBottom: '1.5rem', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                        <h3 style={{ margin: 0 }}>{selectedMeeting.title}</h3>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                          <button
+                            onClick={() => summarizeMeeting(selectedMeeting.id)}
+                            disabled={summarizing || (selectedMeeting.segments || []).length === 0}
+                            style={{ background: 'var(--accent-color)', color: '#fff', border: 'none', padding: '0.4rem 0.9rem', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+                          >
+                            <RefreshCw size={14} /> {summarizing ? 'Summarizing...' : (selectedMeeting.summary ? 'Regenerate Summary' : 'Generate Summary')}
+                          </button>
+                          <button onClick={() => setSelectedMeeting(null)} style={{ background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border-color, var(--surface-border))', padding: '0.4rem', borderRadius: '8px', cursor: 'pointer' }}>
+                            <X size={14} />
+                          </button>
+                        </div>
+                      </div>
+                      <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1rem' }}>
+                        {formatMeetingTime(selectedMeeting.startedAt)}
+                        {selectedMeeting.endedAt ? ` — ${formatMeetingTime(selectedMeeting.endedAt)}` : ''}
+                        {' · '}{(selectedMeeting.segments || []).length} transcript segment(s)
+                        {selectedMeeting.status === 'processing' ? ' · finishing transcription...' : ''}
+                      </p>
+                      {selectedMeeting.summary ? (
+                        <div className="markdown-body" style={{ marginBottom: '1rem' }}>
+                          <ReactMarkdown>{selectedMeeting.summary}</ReactMarkdown>
+                        </div>
+                      ) : (
+                        <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+                          {(selectedMeeting.segments || []).length === 0
+                            ? 'No speech was captured in this meeting.'
+                            : 'No summary yet — click Generate Summary.'}
+                        </p>
+                      )}
+                      {(selectedMeeting.segments || []).length > 0 && (
+                        <details>
+                          <summary style={{ cursor: 'pointer', color: 'var(--accent-color)', marginBottom: '0.5rem' }}>Full transcript</summary>
+                          <div className="chat-messages transcript-box" style={{ maxHeight: '250px' }}>
+                            {selectedMeeting.segments.map((seg, i) => (
+                              <div key={i} className="transcript-segment">
+                                <div className="transcript-time">{seg.start?.split('T')[1] || ''}</div>
+                                <div className="transcript-text">{seg.text}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      )}
+                    </div>
+                  )}
+
+                  <h3 style={{ marginBottom: '0.75rem' }}><FileText size={18} /> Past Meetings</h3>
+                  {meetingsList.length === 0 ? (
+                    <p style={{ color: 'var(--text-secondary)' }}>No meetings captured yet. Click "Start Capture" before your next call.</p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      {meetingsList.map(m => (
+                        <div
+                          key={m.id}
+                          onClick={() => openMeeting(m.id)}
+                          style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.75rem', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', cursor: 'pointer', border: selectedMeeting?.id === m.id ? '1px solid var(--accent-color)' : '1px solid transparent' }}
+                        >
+                          <Mic size={16} color="#ef4444" />
+                          <span style={{ flex: 1 }}>
+                            {m.title}
+                            <span style={{ color: 'var(--text-secondary)', marginLeft: '0.75rem', fontSize: '0.85rem' }}>
+                              {formatMeetingTime(m.startedAt)} · {m.segmentCount} segment(s)
+                              {m.hasSummary ? ' · summarized' : ''}
+                            </span>
+                          </span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); deleteMeeting(m.id); }}
+                            title="Delete meeting"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: 0 }}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

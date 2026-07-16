@@ -6,6 +6,8 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder",
+    "build-watcher": "\"%WINDIR%\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe\" -nologo -optimize -out:ActiveWindow.exe ActiveWindow.cs",
+    "sync-dashboard": "node -e \"const fs=require('fs');fs.rmSync('dashboard',{recursive:true,force:true});fs.cpSync('../frontend/dist','dashboard',{recursive:true});console.log('dashboard synced');\"",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "build": {

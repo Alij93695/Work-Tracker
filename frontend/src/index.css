@@ -715,3 +715,87 @@ h1 {
     transform: translateY(0);
   }
 }
+
+/* ---------------- Meetings ---------------- */
+.recording-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: 999px;
+  padding: 0.15rem 0.7rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.recording-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ef4444;
+  animation: recording-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes recording-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
+  50% { opacity: 0.6; box-shadow: 0 0 0 5px rgba(239, 68, 68, 0); }
+}
+
+.meeting-live-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.capture-badges {
+  display: inline-flex;
+  gap: 0.4rem;
+}
+
+.capture-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: rgba(16, 185, 129, 0.12);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  border-radius: 999px;
+  padding: 0.1rem 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.transcript-box {
+  max-height: 380px;
+  padding: 0.5rem;
+}
+
+.transcript-segment {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  margin-bottom: 0.4rem;
+  background: rgba(255, 255, 255, 0.03);
+  animation: fadeIn 0.4s ease;
+}
+
+.transcript-time {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding-top: 0.15rem;
+}
+
+.transcript-text {
+  flex: 1;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
