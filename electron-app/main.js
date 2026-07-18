@@ -243,7 +243,12 @@ const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
     app.quit();
 } else {
-    app.on('second-instance', () => createDashboard());
+    app.on('second-instance', (event, commandLine) => {
+        // A keepalive relaunch (scheduled task) just confirms we're alive —
+        // don't pop the dashboard for it. Real user launches open it.
+        if (commandLine && commandLine.includes('--keepalive')) return;
+        createDashboard();
+    });
 
     app.whenReady().then(() => {
         log.info(`Scribe starting (v${app.getVersion()}, packaged: ${app.isPackaged})`);

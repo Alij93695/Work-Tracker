@@ -1,8 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { format, subDays, addDays } from 'date-fns';
-import { Activity, Clock, ChevronLeft, ChevronRight, ChevronDown, Monitor, Sparkles, Sunrise, CheckCircle, Circle, Trash2, Edit2, Save, MessageCircle, Send, Bell, BellOff, X, Mic, Square, FileText, RefreshCw, Volume2 } from 'lucide-react';
+import { Activity, Clock, ChevronLeft, ChevronRight, Monitor, Sparkles, Sunrise, CheckCircle, Circle, Trash2, Edit2, Save, MessageCircle, Send, Bell, BellOff, X, Mic, Square, FileText, RefreshCw, Volume2, Zap, Moon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import './index.css';
+
+const NAV_ITEMS = [
+  { key: 'overview', label: 'Overview', icon: Activity },
+  { key: 'tasks', label: 'Tasks', icon: CheckCircle },
+  { key: 'meetings', label: 'Meetings', icon: Mic },
+  { key: 'chat', label: 'AI Assistant', icon: MessageCircle },
+];
 
 function App() {
   const [date, setDate] = useState(new Date());
@@ -21,7 +28,7 @@ function App() {
   const [showReminderPicker, setShowReminderPicker] = useState(false);
   const [reminderTime, setReminderTime] = useState('');
   const [activePreset, setActivePreset] = useState('');
-  const [activeTab, setActiveTab] = useState('summary'); // 'summary' or 'chat'
+  const [activeView, setActiveView] = useState('overview');
 
   // Chat States
   const [chatMessages, setChatMessages] = useState([]);
@@ -42,10 +49,10 @@ function App() {
   useEffect(() => {
     fetchData(date);
     fetchSavedSummary(date);
-    
+
     let interval;
     if (format(date, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd')) {
-      interval = setInterval(() => fetchData(date), 10000); 
+      interval = setInterval(() => fetchData(date), 10000);
     }
     return () => clearInterval(interval);
   }, [date]);
@@ -120,7 +127,7 @@ function App() {
       targetDate = new Date(now.getTime() + 2 * 60 * 60 * 1000);
     } else if (preset === 'eod') {
       targetDate = new Date(now);
-      targetDate.setHours(18, 0, 0, 0); // 6:00 PM
+      targetDate.setHours(18, 0, 0, 0);
       if (targetDate <= now) {
         targetDate.setDate(targetDate.getDate() + 1);
       }
@@ -133,10 +140,10 @@ function App() {
 
   const addTask = () => {
     if (!newTask.trim()) return;
-    const task = { 
-      id: Date.now(), 
-      text: newTask, 
-      completed: false 
+    const task = {
+      id: Date.now(),
+      text: newTask,
+      completed: false
     };
     if (reminderTime) {
       task.reminderAt = reminderTime;
@@ -228,7 +235,7 @@ function App() {
     setLoadingMorning(true);
     setMorningTasks('');
     try {
-      const url = forceRefresh 
+      const url = forceRefresh
         ? `http://localhost:3001/api/morning-tasks?refresh=true`
         : `http://localhost:3001/api/morning-tasks`;
       const res = await fetch(url);
@@ -247,7 +254,7 @@ function App() {
   // Chat functions
   const sendChatMessage = async () => {
     if (!chatInput.trim() || chatLoading) return;
-    
+
     const userMessage = { role: 'user', content: chatInput };
     setChatMessages(prev => [...prev, userMessage]);
     setChatInput('');
@@ -261,7 +268,7 @@ function App() {
         body: JSON.stringify({ message: chatInput, date: dateStr })
       });
       const result = await res.json();
-      
+
       if (result.error) {
         setChatMessages(prev => [...prev, { role: 'ai', content: `**Error:** ${result.error}` }]);
       } else {
@@ -388,9 +395,6 @@ function App() {
     }
   };
 
-  const meetingActive = !!meetingStatus?.active;
-  const liveSegments = meetingStatus?.meeting?.segments || [];
-
   const formatDuration = (seconds) => {
     if (seconds < 60) return `${Math.round(seconds)}s`;
     const minutes = Math.floor(seconds / 60);
@@ -407,552 +411,555 @@ function App() {
     }
   };
 
-  const maxDuration = Math.max(...Object.values(data.summary || { _: 1 }));
+  const meetingActive = !!meetingStatus?.active;
+  const liveSegments = meetingStatus?.meeting?.segments || [];
+
+  // ---- derived stats for the overview ----
+  const allEntries = Object.entries(data.summary || {});
+  const appOnly = allEntries.filter(([k]) => !k.startsWith('('));
+  const awaySeconds = allEntries.filter(([k]) => k.startsWith('(')).reduce((a, [, v]) => a + v, 0);
+  const totalActive = appOnly.reduce((a, [, v]) => a + v, 0);
+  const topApp = appOnly.length > 0 ? appOnly[0][0] : '—';
+  const maxDuration = Math.max(1, ...allEntries.map(([, v]) => v));
+  const todayStr = format(date, 'yyyy-MM-dd');
+  const meetingsToday = meetingsList.filter(m => (m.startedAt || '').startsWith(todayStr)).length;
+  const isToday = todayStr === format(new Date(), 'yyyy-MM-dd');
+
+  const activeNav = NAV_ITEMS.find(n => n.key === activeView) || NAV_ITEMS[0];
+
+  // ---- shared blocks ----
+  const dateSelector = (
+    <div className="date-selector">
+      <button className="icon-btn" onClick={() => setDate(subDays(date, 1))} title="Previous day">
+        <ChevronLeft size={17} />
+      </button>
+      <span>{format(date, 'EEE, MMM d')}</span>
+      <button
+        className="icon-btn"
+        onClick={() => setDate(addDays(date, 1))}
+        disabled={isToday}
+        title="Next day"
+      >
+        <ChevronRight size={17} />
+      </button>
+    </div>
+  );
+
+  const smartSummaryCard = (
+    <div className="card accent-card">
+      <div className="card-head">
+        <h2><Sparkles size={19} /> Smart Summary</h2>
+        <div className="btn-row">
+          {aiSummary && !isEditingSummary && (
+            <button className="btn btn-ghost" onClick={() => setIsEditingSummary(true)}>
+              <Edit2 size={14} /> Edit
+            </button>
+          )}
+          {isEditingSummary && (
+            <button className="btn btn-success" onClick={saveSummary}>
+              <Save size={14} /> Save
+            </button>
+          )}
+          <button
+            className="btn btn-primary"
+            onClick={fetchAiSummary}
+            disabled={loadingAi || data.logs.length === 0}
+          >
+            {loadingAi ? 'Generating…' : 'Generate'}
+          </button>
+        </div>
+      </div>
+      <div className="markdown-body">
+        {isEditingSummary ? (
+          <textarea
+            className="summary-editor"
+            value={aiSummary}
+            onChange={(e) => setAiSummary(e.target.value)}
+          />
+        ) : aiSummary ? (
+          <ReactMarkdown>{aiSummary}</ReactMarkdown>
+        ) : (
+          <p className="hint">Generate a human-readable summary of this day's raw activity.</p>
+        )}
+      </div>
+    </div>
+  );
 
   return (
-    <div className="dashboard">
-      <header>
-        <h1 style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          Scribe
-          {meetingActive && (
-            <span className="recording-pill" title="Meeting capture is running">
-              <span className="recording-dot" /> REC
-            </span>
-          )}
-        </h1>
-        <div className="date-selector">
-          <button onClick={() => setDate(subDays(date, 1))}>
-            <ChevronLeft size={20} />
-          </button>
-          <span>{format(date, 'MMMM d, yyyy')}</span>
-          <button 
-            onClick={() => setDate(addDays(date, 1))}
-            disabled={format(date, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd')}
-            style={{ opacity: format(date, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd') ? 0.3 : 1 }}
-          >
-            <ChevronRight size={20} />
-          </button>
+    <div className="app-shell">
+      {/* ---------------- Sidebar ---------------- */}
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark"><Zap size={17} /></div>
+          <span className="brand-name">Scribe</span>
         </div>
-      </header>
 
-      {/* Manual Task List with Reminders */}
-      <div className="card" style={{ marginBottom: '2rem', borderLeft: '4px solid #10b981' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <h2><CheckCircle size={24} color="#10b981" /> My Tasks</h2>
+        <nav className="nav">
+          {NAV_ITEMS.map(item => {
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.key}
+                className={`nav-item ${activeView === item.key ? 'active' : ''}`}
+                onClick={() => { setActiveView(item.key); if (item.key === 'meetings') fetchMeetings(); }}
+              >
+                <Icon size={17} />
+                <span>{item.label}</span>
+                {item.key === 'meetings' && meetingActive && <span className="recording-dot" />}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="sidebar-footer">
+          <div className={`status-chip ${meetingActive ? 'rec' : ''}`}>
+            <span className={meetingActive ? 'recording-dot' : 'live-dot'} />
+            {meetingActive ? 'Recording meeting' : 'Tracking active'}
+          </div>
         </div>
-        <div className="task-add-row">
-          <input 
-            type="text" 
-            value={newTask}
-            onChange={(e) => setNewTask(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && addTask()}
-            placeholder="Add a new task..." 
-            style={{ flex: 1, padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-color, var(--surface-border))', background: 'var(--card-bg, rgba(0,0,0,0.2))', color: 'var(--text-primary)' }}
-          />
-          <button 
-            className={`reminder-btn ${showReminderPicker ? 'active' : ''}`}
-            onClick={() => {
-              if (showReminderPicker) {
-                setReminderTime('');
-                setActivePreset('');
-              }
-              setShowReminderPicker(!showReminderPicker);
-            }}
-            title="Set reminder"
-          >
-            <Bell size={18} />
-          </button>
-          <button onClick={addTask} style={{ background: '#10b981', color: '#fff', border: 'none', padding: '0 1.5rem', borderRadius: '8px', cursor: 'pointer', height: '42px', fontWeight: 600 }}>Add</button>
-        </div>
-        {showReminderPicker && (
-          <div className="reminder-picker-card">
-            <div className="reminder-presets">
-              <span className="reminder-label">Suggestions:</span>
-              <div className="preset-buttons">
-                <button 
-                  type="button" 
-                  onClick={() => setPresetTime('1h')}
-                  className={`preset-btn ${activePreset === '1h' ? 'active' : ''}`}
-                >
-                  1 Hour
-                </button>
-                <button 
-                  type="button" 
-                  onClick={() => setPresetTime('2h')}
-                  className={`preset-btn ${activePreset === '2h' ? 'active' : ''}`}
-                >
-                  2 Hours
-                </button>
-                <button 
-                  type="button" 
-                  onClick={() => setPresetTime('eod')}
-                  className={`preset-btn ${activePreset === 'eod' ? 'active' : ''}`}
-                >
-                  End of Day
-                </button>
+      </aside>
+
+      {/* ---------------- Main ---------------- */}
+      <main className="main">
+        <header className="topbar">
+          <div className="topbar-title">
+            <h1>{activeNav.label}</h1>
+            <p className="subtitle">{format(date, 'MMMM d, yyyy')}</p>
+          </div>
+          <div className="topbar-right">
+            {meetingActive && (
+              <span className="recording-pill" title="Meeting capture is running">
+                <span className="recording-dot" /> REC
+              </span>
+            )}
+            {dateSelector}
+          </div>
+        </header>
+
+        {/* ---------------- Overview ---------------- */}
+        {activeView === 'overview' && (
+          <>
+            <div className="stat-row">
+              <div className="stat-tile">
+                <div className="stat-icon violet"><Clock size={16} /></div>
+                <div className="stat-value">{totalActive > 0 ? formatDuration(totalActive) : '—'}</div>
+                <div className="stat-label">Tracked {isToday ? 'today' : 'this day'}</div>
+              </div>
+              <div className="stat-tile">
+                <div className="stat-icon teal"><Monitor size={16} /></div>
+                <div className="stat-value stat-value-text" title={topApp}>{topApp}</div>
+                <div className="stat-label">Top application</div>
+              </div>
+              <div className="stat-tile">
+                <div className="stat-icon violet"><Activity size={16} /></div>
+                <div className="stat-value">{data.logs.length}</div>
+                <div className="stat-label">Window switches</div>
+              </div>
+              <div className="stat-tile">
+                <div className="stat-icon muted"><Moon size={16} /></div>
+                <div className="stat-value">{awaySeconds > 0 ? formatDuration(awaySeconds) : '—'}</div>
+                <div className="stat-label">Away / idle</div>
               </div>
             </div>
-            
-            <div className="reminder-custom">
-              <div className="reminder-input-container">
-                <Bell size={16} className="reminder-icon" />
-                <span className="reminder-label">Custom Date & Time:</span>
-                <input 
-                  type="datetime-local" 
-                  value={reminderTime}
-                  onChange={(e) => {
-                    setReminderTime(e.target.value);
-                    setActivePreset('');
-                  }}
-                  min={format(new Date(), "yyyy-MM-dd'T'HH:mm")}
-                />
+
+            {smartSummaryCard}
+
+            <div className="grid">
+              <div className="card">
+                <div className="card-head">
+                  <h2><Activity size={19} /> Activity Timeline</h2>
+                </div>
+                {data.logs && data.logs.length > 0 ? (
+                  <div className="timeline">
+                    {[...data.logs].reverse().map((log, index) => {
+                      const time = format(new Date(log.timestamp), 'HH:mm');
+                      const away = (log.application || '').startsWith('(');
+                      return (
+                        <div key={index} className={`timeline-item ${away ? 'away' : ''}`}>
+                          <div className="timeline-time">{time}</div>
+                          <div className="timeline-content">
+                            <div className="timeline-app">{log.application}</div>
+                            <div className="timeline-title">{log.title}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="empty-state">
+                    <Monitor size={40} className="empty-icon" />
+                    <p>No activity recorded for this day.</p>
+                  </div>
+                )}
               </div>
-              {reminderTime && (
-                <button 
-                  onClick={() => { setReminderTime(''); setActivePreset(''); }}
-                  className="reminder-clear-btn"
-                  title="Clear reminder"
+
+              <div className="card">
+                <div className="card-head">
+                  <h2><Clock size={19} /> Time by Application</h2>
+                </div>
+                {allEntries.length > 0 ? (
+                  <div className="summary-list">
+                    {allEntries.map(([app, duration]) => {
+                      const percentage = (duration / maxDuration) * 100;
+                      const away = app.startsWith('(');
+                      return (
+                        <div key={app} className={`summary-item ${away ? 'away' : ''}`} title={`${app}: ${formatDuration(duration)}`}>
+                          <div className="summary-header">
+                            <span className="summary-app">{app}</span>
+                            <span className="summary-duration">{formatDuration(duration)}</span>
+                          </div>
+                          <div className="progress-bar">
+                            <div className="progress-fill" style={{ width: `${percentage}%` }}></div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="empty-state">
+                    <p>No summary available.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* ---------------- Tasks ---------------- */}
+        {activeView === 'tasks' && (
+          <>
+            <div className="card">
+              <div className="card-head">
+                <h2><CheckCircle size={19} /> My Tasks</h2>
+              </div>
+              <div className="task-add-row">
+                <input
+                  type="text"
+                  className="text-input"
+                  value={newTask}
+                  onChange={(e) => setNewTask(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && addTask()}
+                  placeholder="Add a new task…"
+                />
+                <button
+                  className={`icon-btn reminder-btn ${showReminderPicker ? 'active' : ''}`}
+                  onClick={() => {
+                    if (showReminderPicker) {
+                      setReminderTime('');
+                      setActivePreset('');
+                    }
+                    setShowReminderPicker(!showReminderPicker);
+                  }}
+                  title="Set reminder"
                 >
-                  <X size={16} />
+                  <Bell size={17} />
                 </button>
+                <button className="btn btn-success" onClick={addTask}>Add</button>
+              </div>
+              {showReminderPicker && (
+                <div className="reminder-picker-card">
+                  <div className="reminder-presets">
+                    <span className="reminder-label">Suggestions:</span>
+                    <div className="preset-buttons">
+                      <button type="button" onClick={() => setPresetTime('1h')} className={`preset-btn ${activePreset === '1h' ? 'active' : ''}`}>1 Hour</button>
+                      <button type="button" onClick={() => setPresetTime('2h')} className={`preset-btn ${activePreset === '2h' ? 'active' : ''}`}>2 Hours</button>
+                      <button type="button" onClick={() => setPresetTime('eod')} className={`preset-btn ${activePreset === 'eod' ? 'active' : ''}`}>End of Day</button>
+                    </div>
+                  </div>
+                  <div className="reminder-custom">
+                    <div className="reminder-input-container">
+                      <Bell size={15} className="reminder-icon" />
+                      <span className="reminder-label">Custom:</span>
+                      <input
+                        type="datetime-local"
+                        value={reminderTime}
+                        onChange={(e) => {
+                          setReminderTime(e.target.value);
+                          setActivePreset('');
+                        }}
+                        min={format(new Date(), "yyyy-MM-dd'T'HH:mm")}
+                      />
+                    </div>
+                    {reminderTime && (
+                      <button onClick={() => { setReminderTime(''); setActivePreset(''); }} className="reminder-clear-btn" title="Clear reminder">
+                        <X size={15} />
+                      </button>
+                    )}
+                  </div>
+                </div>
               )}
+              <div className="task-list">
+                {tasks.length === 0 ? <p className="hint">No tasks added yet.</p> : null}
+                {tasks.map(task => (
+                  <div key={task.id} className="task-item">
+                    <button className="check-btn" onClick={() => toggleTask(task.id)}>
+                      {task.completed ? <CheckCircle size={19} className="check-done" /> : <Circle size={19} className="check-open" />}
+                    </button>
+                    <span className={`task-text ${task.completed ? 'done' : ''}`}>
+                      {task.text}
+                      {task.source === 'meeting' && <span className="tag tag-meeting"><Mic size={10} /> meeting</span>}
+                      {task.reminderAt && !task.reminderFired && (
+                        <span className="reminder-badge">
+                          <Bell size={11} />
+                          {formatReminderTime(task.reminderAt)}
+                          <button onClick={(e) => { e.stopPropagation(); clearReminder(task.id); }} title="Remove reminder">
+                            <X size={11} />
+                          </button>
+                        </span>
+                      )}
+                      {task.reminderFired && (
+                        <span className="reminder-badge fired">
+                          <BellOff size={11} /> Reminded
+                        </span>
+                      )}
+                    </span>
+                    <button className="icon-btn danger" onClick={() => deleteTask(task.id)} title="Delete task">
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-head">
+                <h2><Sunrise size={19} /> Morning Action Plan</h2>
+                <button className="btn btn-warning" onClick={() => fetchMorningTasks(true)} disabled={loadingMorning}>
+                  {loadingMorning ? 'Analyzing…' : 'Refresh Suggestions'}
+                </button>
+              </div>
+              <div className="markdown-body">
+                {morningTasks ? <ReactMarkdown>{morningTasks}</ReactMarkdown> : <p className="hint">Click refresh to analyze the past 7 days and get your morning tasks.</p>}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* ---------------- Meetings ---------------- */}
+        {activeView === 'meetings' && (
+          <div className="card">
+            <div className="card-head">
+              <h2><Mic size={19} /> Meetings</h2>
+              {meetingActive ? (
+                <button className="btn btn-danger" onClick={stopMeeting} disabled={meetingBusy}>
+                  <Square size={14} /> {meetingBusy ? 'Stopping…' : 'Stop & Summarize'}
+                </button>
+              ) : (
+                <div className="btn-row">
+                  <input
+                    type="text"
+                    className="text-input meeting-title-input"
+                    value={meetingTitle}
+                    onChange={(e) => setMeetingTitle(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && startMeeting()}
+                    placeholder="Meeting title (optional)"
+                  />
+                  <button className="btn btn-danger" onClick={startMeeting} disabled={meetingBusy}>
+                    <Mic size={14} /> {meetingBusy ? 'Starting…' : 'Start Capture'}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {meetingError && <p className="error-text">{meetingError}</p>}
+
+            {meetingActive ? (
+              <div>
+                <div className="meeting-live-header">
+                  <span className="recording-dot" />
+                  <strong>{meetingStatus.meeting.title}</strong>
+                  <span className="hint">started {formatMeetingTime(meetingStatus.meeting.startedAt)}</span>
+                  {meetingStatus.capture && meetingStatus.capture.system && (
+                    <span className="capture-badge"><Volume2 size={12} /> Listening to system audio</span>
+                  )}
+                  {meetingStatus.pendingChunks > 0 && (
+                    <span className="hint small">transcribing {meetingStatus.pendingChunks} chunk(s)…</span>
+                  )}
+                </div>
+                {meetingStatus.meeting.error && (
+                  <p className="warn-text">Capture warning: {meetingStatus.meeting.error}</p>
+                )}
+                <div className="transcript-box">
+                  {liveSegments.length === 0 ? (
+                    <p className="hint pad">
+                      Listening to your meeting's audio… The live transcript appears here about 20-40 seconds
+                      after speech is detected. No bot joins the call, the microphone stays off, and the meeting
+                      app can't see this — audio is captured locally from this PC.
+                    </p>
+                  ) : (
+                    liveSegments.map((seg, i) => (
+                      <div key={i} className="transcript-segment">
+                        <div className="transcript-time">{seg.start?.split('T')[1] || ''}</div>
+                        <div className="transcript-text">{seg.text}</div>
+                      </div>
+                    ))
+                  )}
+                  <div ref={transcriptEndRef} />
+                </div>
+              </div>
+            ) : (
+              <div>
+                <p className="hint intro">
+                  Capture live meeting context without inviting a bot to the call. Scribe listens to the
+                  system audio of your Zoom/Teams/VooV meeting locally on this PC (microphone stays off),
+                  streams a live transcript, and generates an AI summary with suggested tasks when you stop —
+                  tasks are only added to your list after you approve them.
+                </p>
+
+                {selectedMeeting && (
+                  <div className="meeting-detail">
+                    <div className="card-head">
+                      <h3>{selectedMeeting.title}</h3>
+                      <div className="btn-row">
+                        <button
+                          className="btn btn-primary"
+                          onClick={() => summarizeMeeting(selectedMeeting.id)}
+                          disabled={summarizing || (selectedMeeting.segments || []).length === 0}
+                        >
+                          <RefreshCw size={13} /> {summarizing ? 'Summarizing…' : (selectedMeeting.summary ? 'Regenerate Summary' : 'Generate Summary')}
+                        </button>
+                        <button className="icon-btn" onClick={() => setSelectedMeeting(null)} title="Close">
+                          <X size={14} />
+                        </button>
+                      </div>
+                    </div>
+                    <p className="hint small">
+                      {formatMeetingTime(selectedMeeting.startedAt)}
+                      {selectedMeeting.endedAt ? ` — ${formatMeetingTime(selectedMeeting.endedAt)}` : ''}
+                      {' · '}{(selectedMeeting.segments || []).length} transcript segment(s)
+                      {selectedMeeting.status === 'processing' ? ' · finishing transcription…' : ''}
+                    </p>
+                    {selectedMeeting.summary ? (
+                      <div className="markdown-body">
+                        <ReactMarkdown>{selectedMeeting.summary}</ReactMarkdown>
+                      </div>
+                    ) : (
+                      <p className="hint">
+                        {(selectedMeeting.segments || []).length === 0
+                          ? 'No speech was captured in this meeting.'
+                          : 'No summary yet — click Generate Summary.'}
+                      </p>
+                    )}
+                    {(selectedMeeting.suggestedTasks || []).length > 0 && (
+                      <div className="suggested-tasks">
+                        <h4><CheckCircle size={15} /> Suggested Tasks <span className="hint small">— added to My Tasks only after you approve</span></h4>
+                        {selectedMeeting.suggestedTasks.map(s => (
+                          <div key={s.id} className={`suggestion-item ${s.status}`}>
+                            <span className="suggestion-text">{s.text}</span>
+                            {s.status === 'suggested' && (
+                              <>
+                                <button className="btn btn-success sm" onClick={() => actOnSuggestion(selectedMeeting.id, s.id, 'approve')}>Add to My Tasks</button>
+                                <button className="btn btn-ghost sm" onClick={() => actOnSuggestion(selectedMeeting.id, s.id, 'dismiss')}>Dismiss</button>
+                              </>
+                            )}
+                            {s.status === 'added' && <span className="tag tag-added">✓ Added</span>}
+                            {s.status === 'dismissed' && <span className="tag">Dismissed</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {(selectedMeeting.segments || []).length > 0 && (
+                      <details className="transcript-details">
+                        <summary>Full transcript</summary>
+                        <div className="transcript-box compact">
+                          {selectedMeeting.segments.map((seg, i) => (
+                            <div key={i} className="transcript-segment">
+                              <div className="transcript-time">{seg.start?.split('T')[1] || ''}</div>
+                              <div className="transcript-text">{seg.text}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                )}
+
+                <h3 className="section-label"><FileText size={15} /> Past Meetings</h3>
+                {meetingsList.length === 0 ? (
+                  <p className="hint">No meetings captured yet. Click "Start Capture" before your next call.</p>
+                ) : (
+                  <div className="meeting-list">
+                    {meetingsList.map(m => (
+                      <div
+                        key={m.id}
+                        onClick={() => openMeeting(m.id)}
+                        className={`meeting-row ${selectedMeeting?.id === m.id ? 'selected' : ''}`}
+                      >
+                        <Mic size={15} className="meeting-row-icon" />
+                        <span className="meeting-row-main">
+                          {m.title}
+                          <span className="hint small">
+                            {formatMeetingTime(m.startedAt)} · {m.segmentCount} segment(s)
+                            {m.hasSummary ? ' · summarized' : ''}
+                          </span>
+                        </span>
+                        <button
+                          className="icon-btn danger"
+                          onClick={(e) => { e.stopPropagation(); deleteMeeting(m.id); }}
+                          title="Delete meeting"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ---------------- AI Assistant ---------------- */}
+        {activeView === 'chat' && (
+          <div className="card chat-card">
+            <div className="card-head">
+              <h2><MessageCircle size={19} /> AI Assistant</h2>
+            </div>
+            <div className="chat-messages">
+              {chatMessages.length === 0 && (
+                <div className="empty-state">
+                  <MessageCircle size={30} className="empty-icon" />
+                  <p>Ask me anything about your work data!</p>
+                  <p className="hint small">
+                    e.g., "Summarize only my VS Code usage today" or "How productive was I this week?"
+                  </p>
+                </div>
+              )}
+              {chatMessages.map((msg, i) => (
+                <div key={i} className={`chat-message ${msg.role}`}>
+                  <div className="role">{msg.role === 'user' ? 'You' : 'Scribe AI'}</div>
+                  <div className="content">
+                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  </div>
+                </div>
+              ))}
+              {chatLoading && (
+                <div className="chat-message ai">
+                  <div className="role">Scribe AI</div>
+                  <div className="typing-indicator">
+                    <span></span><span></span><span></span>
+                  </div>
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+            <div className="chat-input-row">
+              <input
+                className="text-input"
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()}
+                placeholder="Ask about your work data…"
+                disabled={chatLoading}
+              />
+              <button className="btn btn-primary" onClick={sendChatMessage} disabled={chatLoading || !chatInput.trim()}>
+                <Send size={14} /> Send
+              </button>
             </div>
           </div>
         )}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          {tasks.length === 0 ? <p style={{color: 'var(--text-secondary)'}}>No tasks added yet.</p> : null}
-          {tasks.map(task => (
-            <div key={task.id} style={{ display: 'flex', alignItems: 'center', padding: '0.75rem', background: 'rgba(255,255,255,0.03)', borderRadius: '8px' }}>
-              <button onClick={() => toggleTask(task.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '0', marginRight: '1rem' }}>
-                {task.completed ? <CheckCircle color="#10b981" /> : <Circle color="var(--text-secondary)" />}
-              </button>
-              <span style={{ flex: 1, textDecoration: task.completed ? 'line-through' : 'none', color: task.completed ? 'var(--text-secondary)' : 'var(--text-primary)' }}>
-                {task.text}
-                {task.reminderAt && !task.reminderFired && (
-                  <span className="reminder-badge">
-                    <Bell size={12} />
-                    {formatReminderTime(task.reminderAt)}
-                    <button onClick={(e) => { e.stopPropagation(); clearReminder(task.id); }} title="Remove reminder">
-                      <X size={12} />
-                    </button>
-                  </span>
-                )}
-                {task.reminderFired && (
-                  <span className="reminder-badge" style={{ color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.05)' }}>
-                    <BellOff size={12} />
-                    Reminded
-                  </span>
-                )}
-              </span>
-              <button onClick={() => deleteTask(task.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0', color: '#ef4444' }}>
-                <Trash2 size={18} />
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Morning Tasks Banner */}
-      <div className="card" style={{ marginBottom: '2rem', borderLeft: '4px solid #f59e0b' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <h2><Sunrise size={24} color="#f59e0b" /> Morning Action Plan</h2>
-          <button 
-            onClick={() => fetchMorningTasks(true)} 
-            disabled={loadingMorning}
-            style={{ background: '#f59e0b', color: '#fff', border: 'none', padding: '0.5rem 1rem', borderRadius: '8px', cursor: 'pointer' }}
-          >
-            {loadingMorning ? 'Analyzing...' : 'Refresh Suggestions'}
-          </button>
-        </div>
-        <div className="markdown-body">
-          {morningTasks ? <ReactMarkdown>{morningTasks}</ReactMarkdown> : <p style={{color: 'var(--text-secondary)'}}>Click refresh to analyze the past 7 days and get your morning tasks.</p>}
-        </div>
-      </div>
-
-      {/* Redesigned Tab Section (Smart Summary & AI Assistant) */}
-      <div className="tab-container" style={{ marginBottom: '2rem' }}>
-        <div className="tab-bar">
-          <button 
-            type="button"
-            className={`tab-btn ${activeTab === 'summary' ? 'active' : ''}`}
-            onClick={() => setActiveTab('summary')}
-          >
-            <Sparkles size={16} />
-            <span>Smart Summary</span>
-          </button>
-          <button
-            type="button"
-            className={`tab-btn ${activeTab === 'chat' ? 'active' : ''}`}
-            onClick={() => setActiveTab('chat')}
-          >
-            <MessageCircle size={16} />
-            <span>AI Assistant</span>
-          </button>
-          <button
-            type="button"
-            className={`tab-btn ${activeTab === 'meetings' ? 'active' : ''}`}
-            onClick={() => { setActiveTab('meetings'); fetchMeetings(); }}
-          >
-            <Mic size={16} />
-            <span>Meetings</span>
-            {meetingActive && <span className="recording-dot" style={{ marginLeft: '0.35rem' }} />}
-          </button>
-        </div>
-
-        <div className="tab-content">
-          {activeTab === 'summary' && (
-            <div className="card" style={{ border: '1px solid rgba(99, 102, 241, 0.3)', background: 'linear-gradient(180deg, rgba(99,102,241,0.05) 0%, rgba(0,0,0,0) 100%)', margin: 0 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                <h2><Sparkles size={24} color="var(--accent-color)" /> Smart Summary</h2>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  {aiSummary && !isEditingSummary && (
-                    <button onClick={() => setIsEditingSummary(true)} style={{ background: 'transparent', color: 'var(--accent-color)', border: '1px solid var(--accent-color)', padding: '0.5rem', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                      <Edit2 size={16} /> Edit
-                    </button>
-                  )}
-                  {isEditingSummary && (
-                    <button onClick={saveSummary} style={{ background: '#10b981', color: '#fff', border: 'none', padding: '0.5rem', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                      <Save size={16} /> Save
-                    </button>
-                  )}
-                  <button 
-                    onClick={fetchAiSummary} 
-                    disabled={loadingAi || data.logs.length === 0}
-                    style={{ background: 'var(--accent-color)', color: '#fff', border: 'none', padding: '0.5rem 1rem', borderRadius: '8px', cursor: data.logs.length === 0 ? 'not-allowed' : 'pointer', opacity: data.logs.length === 0 ? 0.5 : 1 }}
-                  >
-                    {loadingAi ? 'Generating...' : 'Generate'}
-                  </button>
-                </div>
-              </div>
-              
-              <div className="markdown-body">
-                {isEditingSummary ? (
-                  <textarea
-                    value={aiSummary}
-                    onChange={(e) => setAiSummary(e.target.value)}
-                    style={{ width: '100%', minHeight: '200px', padding: '1rem', background: 'rgba(0,0,0,0.2)', color: 'var(--text-primary)', border: '1px solid var(--border-color, var(--surface-border))', borderRadius: '8px', fontFamily: 'inherit', resize: 'vertical' }}
-                  />
-                ) : aiSummary ? (
-                  <ReactMarkdown>{aiSummary}</ReactMarkdown>
-                ) : (
-                  <p style={{ color: 'var(--text-secondary)' }}>
-                    Click generate to analyze today's raw logs into a human-readable summary.
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'chat' && (
-            <div className="card" style={{ borderLeft: '4px solid #8b5cf6', margin: 0 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                <h2><MessageCircle size={24} color="#8b5cf6" /> AI Assistant</h2>
-              </div>
-              
-              <div className="chat-messages" style={{ marginTop: '1rem', maxHeight: '350px' }}>
-                {chatMessages.length === 0 && (
-                  <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
-                    <MessageCircle size={32} style={{ opacity: 0.3, marginBottom: '0.5rem' }} />
-                    <p>Ask me anything about your work data!</p>
-                    <p style={{ fontSize: '0.8rem', marginTop: '0.5rem', opacity: 0.7 }}>
-                      e.g., "Summarize only my VS Code usage today" or "How productive was I this week?"
-                    </p>
-                  </div>
-                )}
-                {chatMessages.map((msg, i) => (
-                  <div key={i} className={`chat-message ${msg.role}`}>
-                    <div className="role">{msg.role === 'user' ? 'You' : 'AI Assistant'}</div>
-                    <div className="content">
-                      <ReactMarkdown>{msg.content}</ReactMarkdown>
-                    </div>
-                  </div>
-                ))}
-                {chatLoading && (
-                  <div className="chat-message ai">
-                    <div className="role">AI Assistant</div>
-                    <div className="typing-indicator">
-                      <span></span><span></span><span></span>
-                    </div>
-                  </div>
-                )}
-                <div ref={chatEndRef} />
-              </div>
-
-              <div className="chat-input-row">
-                <input
-                  className="chat-input"
-                  type="text"
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()}
-                  placeholder="Ask about your work data..."
-                  disabled={chatLoading}
-                />
-                <button 
-                  className="chat-send-btn"
-                  onClick={sendChatMessage}
-                  disabled={chatLoading || !chatInput.trim()}
-                >
-                  <Send size={16} />
-                  Send
-                </button>
-              </div>
-            </div>
-          )}
-          {activeTab === 'meetings' && (
-            <div className="card" style={{ borderLeft: '4px solid #ef4444', margin: 0 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                <h2><Mic size={24} color="#ef4444" /> Meetings</h2>
-                {meetingActive ? (
-                  <button
-                    onClick={stopMeeting}
-                    disabled={meetingBusy}
-                    style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '0.5rem 1.25rem', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}
-                  >
-                    <Square size={16} /> {meetingBusy ? 'Stopping...' : 'Stop & Summarize'}
-                  </button>
-                ) : (
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <input
-                      type="text"
-                      value={meetingTitle}
-                      onChange={(e) => setMeetingTitle(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && startMeeting()}
-                      placeholder="Meeting title (optional)"
-                      style={{ padding: '0.5rem 0.75rem', borderRadius: '8px', border: '1px solid var(--border-color, var(--surface-border))', background: 'var(--card-bg, rgba(0,0,0,0.2))', color: 'var(--text-primary)', width: '220px' }}
-                    />
-                    <button
-                      onClick={startMeeting}
-                      disabled={meetingBusy}
-                      style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '0.5rem 1.25rem', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}
-                    >
-                      <Mic size={16} /> {meetingBusy ? 'Starting...' : 'Start Capture'}
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {meetingError && (
-                <p style={{ color: '#ef4444', marginBottom: '1rem' }}>{meetingError}</p>
-              )}
-
-              {meetingActive ? (
-                <div>
-                  <div className="meeting-live-header">
-                    <span className="recording-dot" />
-                    <strong>{meetingStatus.meeting.title}</strong>
-                    <span style={{ color: 'var(--text-secondary)' }}>started {formatMeetingTime(meetingStatus.meeting.startedAt)}</span>
-                    {meetingStatus.capture && (
-                      <span className="capture-badges">
-                        {meetingStatus.capture.system && <span className="capture-badge"><Volume2 size={12} /> Listening to system audio</span>}
-                      </span>
-                    )}
-                    {meetingStatus.pendingChunks > 0 && (
-                      <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>transcribing {meetingStatus.pendingChunks} chunk(s)...</span>
-                    )}
-                  </div>
-                  {meetingStatus.meeting.error && (
-                    <p style={{ color: '#f59e0b', marginBottom: '0.5rem' }}>Capture warning: {meetingStatus.meeting.error}</p>
-                  )}
-                  <div className="chat-messages transcript-box">
-                    {liveSegments.length === 0 ? (
-                      <p style={{ color: 'var(--text-secondary)', padding: '1rem' }}>
-                        Listening to your meeting's audio... The live transcript appears here about 20-40 seconds
-                        after speech is detected. No bot joins the call, the microphone stays off, and the meeting
-                        app can't see this — audio is captured locally from this PC.
-                      </p>
-                    ) : (
-                      liveSegments.map((seg, i) => (
-                        <div key={i} className="transcript-segment">
-                          <div className="transcript-time">{seg.start?.split('T')[1] || ''}</div>
-                          <div className="transcript-text">{seg.text}</div>
-                        </div>
-                      ))
-                    )}
-                    <div ref={transcriptEndRef} />
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-                    Capture live meeting context without inviting a bot to the call. Scribe listens to the
-                    system audio of your Zoom/Teams/VooV meeting locally on this PC (microphone stays off),
-                    streams a live transcript, and generates an AI summary with suggested tasks when you stop —
-                    tasks are only added to your list after you approve them.
-                  </p>
-
-                  {selectedMeeting && (
-                    <div className="card" style={{ marginBottom: '1.5rem', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                        <h3 style={{ margin: 0 }}>{selectedMeeting.title}</h3>
-                        <div style={{ display: 'flex', gap: '0.5rem' }}>
-                          <button
-                            onClick={() => summarizeMeeting(selectedMeeting.id)}
-                            disabled={summarizing || (selectedMeeting.segments || []).length === 0}
-                            style={{ background: 'var(--accent-color)', color: '#fff', border: 'none', padding: '0.4rem 0.9rem', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
-                          >
-                            <RefreshCw size={14} /> {summarizing ? 'Summarizing...' : (selectedMeeting.summary ? 'Regenerate Summary' : 'Generate Summary')}
-                          </button>
-                          <button onClick={() => setSelectedMeeting(null)} style={{ background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border-color, var(--surface-border))', padding: '0.4rem', borderRadius: '8px', cursor: 'pointer' }}>
-                            <X size={14} />
-                          </button>
-                        </div>
-                      </div>
-                      <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1rem' }}>
-                        {formatMeetingTime(selectedMeeting.startedAt)}
-                        {selectedMeeting.endedAt ? ` — ${formatMeetingTime(selectedMeeting.endedAt)}` : ''}
-                        {' · '}{(selectedMeeting.segments || []).length} transcript segment(s)
-                        {selectedMeeting.status === 'processing' ? ' · finishing transcription...' : ''}
-                      </p>
-                      {selectedMeeting.summary ? (
-                        <div className="markdown-body" style={{ marginBottom: '1rem' }}>
-                          <ReactMarkdown>{selectedMeeting.summary}</ReactMarkdown>
-                        </div>
-                      ) : (
-                        <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-                          {(selectedMeeting.segments || []).length === 0
-                            ? 'No speech was captured in this meeting.'
-                            : 'No summary yet — click Generate Summary.'}
-                        </p>
-                      )}
-                      {(selectedMeeting.suggestedTasks || []).length > 0 && (
-                        <div style={{ marginBottom: '1rem' }}>
-                          <h4 style={{ marginBottom: '0.5rem' }}><CheckCircle size={16} color="#10b981" /> Suggested Tasks <span style={{ color: 'var(--text-secondary)', fontWeight: 400, fontSize: '0.8rem' }}>— added to My Tasks only after you approve</span></h4>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                            {selectedMeeting.suggestedTasks.map(s => (
-                              <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.6rem 0.75rem', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', opacity: s.status === 'dismissed' ? 0.5 : 1 }}>
-                                <span style={{ flex: 1, textDecoration: s.status === 'dismissed' ? 'line-through' : 'none' }}>{s.text}</span>
-                                {s.status === 'suggested' && (
-                                  <>
-                                    <button
-                                      onClick={() => actOnSuggestion(selectedMeeting.id, s.id, 'approve')}
-                                      style={{ background: '#10b981', color: '#fff', border: 'none', padding: '0.3rem 0.75rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}
-                                    >
-                                      Add to My Tasks
-                                    </button>
-                                    <button
-                                      onClick={() => actOnSuggestion(selectedMeeting.id, s.id, 'dismiss')}
-                                      style={{ background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border-color, var(--surface-border))', padding: '0.3rem 0.75rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem' }}
-                                    >
-                                      Dismiss
-                                    </button>
-                                  </>
-                                )}
-                                {s.status === 'added' && <span style={{ color: '#10b981', fontSize: '0.8rem', fontWeight: 600 }}>✓ Added</span>}
-                                {s.status === 'dismissed' && <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Dismissed</span>}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {(selectedMeeting.segments || []).length > 0 && (
-                        <details>
-                          <summary style={{ cursor: 'pointer', color: 'var(--accent-color)', marginBottom: '0.5rem' }}>Full transcript</summary>
-                          <div className="chat-messages transcript-box" style={{ maxHeight: '250px' }}>
-                            {selectedMeeting.segments.map((seg, i) => (
-                              <div key={i} className="transcript-segment">
-                                <div className="transcript-time">{seg.start?.split('T')[1] || ''}</div>
-                                <div className="transcript-text">{seg.text}</div>
-                              </div>
-                            ))}
-                          </div>
-                        </details>
-                      )}
-                    </div>
-                  )}
-
-                  <h3 style={{ marginBottom: '0.75rem' }}><FileText size={18} /> Past Meetings</h3>
-                  {meetingsList.length === 0 ? (
-                    <p style={{ color: 'var(--text-secondary)' }}>No meetings captured yet. Click "Start Capture" before your next call.</p>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                      {meetingsList.map(m => (
-                        <div
-                          key={m.id}
-                          onClick={() => openMeeting(m.id)}
-                          style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.75rem', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', cursor: 'pointer', border: selectedMeeting?.id === m.id ? '1px solid var(--accent-color)' : '1px solid transparent' }}
-                        >
-                          <Mic size={16} color="#ef4444" />
-                          <span style={{ flex: 1 }}>
-                            {m.title}
-                            <span style={{ color: 'var(--text-secondary)', marginLeft: '0.75rem', fontSize: '0.85rem' }}>
-                              {formatMeetingTime(m.startedAt)} · {m.segmentCount} segment(s)
-                              {m.hasSummary ? ' · summarized' : ''}
-                            </span>
-                          </span>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); deleteMeeting(m.id); }}
-                            title="Delete meeting"
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: 0 }}
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="grid">
-        <div className="card">
-          <h2><Activity size={24} color="var(--accent-color)" /> Activity Timeline</h2>
-          {data.logs && data.logs.length > 0 ? (
-            <div className="timeline">
-              {[...data.logs].reverse().map((log, index) => {
-                const time = format(new Date(log.timestamp), 'HH:mm');
-                return (
-                  <div key={index} className="timeline-item" style={{ animationDelay: `${index * 0.05}s` }}>
-                    <div className="timeline-time">{time}</div>
-                    <div className="timeline-content">
-                      <div className="timeline-app">{log.application}</div>
-                      <div className="timeline-title">{log.title}</div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="empty-state">
-              <Monitor size={48} className="empty-icon" />
-              <p>No activity recorded for this day.</p>
-            </div>
-          )}
-        </div>
-
-        <div className="card">
-          <h2><Clock size={24} color="#14b8a6" /> Raw Durations</h2>
-          {Object.keys(data.summary || {}).length > 0 ? (
-            <div className="summary-list">
-              {Object.entries(data.summary).map(([app, duration], index) => {
-                const percentage = (duration / maxDuration) * 100;
-                return (
-                  <div key={app} className="summary-item">
-                    <div className="summary-header">
-                      <span className="summary-app">{app}</span>
-                      <span className="summary-duration">{formatDuration(duration)}</span>
-                    </div>
-                    <div className="progress-bar">
-                      <div 
-                        className="progress-fill" 
-                        style={{ width: `${percentage}%`, backgroundColor: `var(--chart-colors)` }}
-                      ></div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="empty-state">
-              <p>No summary available.</p>
-            </div>
-          )}
-        </div>
-      </div>
+      </main>
     </div>
   );
 }
