@@ -28,18 +28,21 @@ function init() {
     providersList = [];
 
     // Helper to add OpenAI-compatible providers
-    const addOpenAiProvider = (name, envKey, endpoint, defaultModel, modelEnvKey, extraHeaders = {}) => {
+    const addOpenAiProvider = (name, envKey, endpoint, defaultModel, modelEnvKey, extraHeaders = {}, allowEmptyKey = false) => {
         let keys = [];
         if (process.env[envKey + 'S']) {
             keys = process.env[envKey + 'S'].split(',').map(k => k.trim()).filter(k => !isPlaceholder(k));
         } else if (process.env[envKey]) {
             const k = process.env[envKey].trim();
             if (!isPlaceholder(k)) keys = [k];
+        } else if (allowEmptyKey) {
+            keys = ['sk-omniroute'];
         }
+
         const model = process.env[modelEnvKey] || defaultModel;
         keys.forEach((apiKey, index) => {
             providersList.push({
-                name: `${name} (Key ${index + 1})`,
+                name: keys.length > 1 ? `${name} (Key ${index + 1})` : name,
                 type: 'openai-compatible',
                 endpoint,
                 apiKey,
@@ -48,6 +51,16 @@ function init() {
             });
         });
     };
+
+    // 0. OmniRoute Gateway (diegosouzapw/OmniRoute - 290+ providers & 500+ models)
+    const omniBase = process.env.OMNIROUTE_BASE_URL ? process.env.OMNIROUTE_BASE_URL.replace(/\/$/, '') : 'http://localhost:8080/v1';
+    const omniEndpoint = process.env.OMNIROUTE_ENDPOINT || `${omniBase}/chat/completions`;
+    const hasOmniConfig = process.env.OMNIROUTE_BASE_URL || process.env.OMNIROUTE_ENDPOINT || (process.env.OMNIROUTE_API_KEY && !isPlaceholder(process.env.OMNIROUTE_API_KEY));
+    if (hasOmniConfig) {
+        addOpenAiProvider('OmniRoute Gateway', 'OMNIROUTE_API_KEY', omniEndpoint, 'auto', 'OMNIROUTE_MODEL', {
+            'X-Title': 'Work Tracker Desktop'
+        }, true);
+    }
 
     // 1. OpenRouter
     addOpenAiProvider('OpenRouter', 'OPENROUTER_API_KEY', 'https://openrouter.ai/api/v1/chat/completions', 'google/gemini-2.5-flash', 'OPENROUTER_MODEL', {
