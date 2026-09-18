@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { format, subDays, addDays } from 'date-fns';
-import { Activity, Clock, ChevronLeft, ChevronRight, Monitor, Sparkles, Sunrise, CheckCircle, Circle, Trash2, Edit2, Save, MessageCircle, Send, Bell, BellOff, X, Mic, Square, FileText, RefreshCw, Volume2, Zap, Moon } from 'lucide-react';
+import { Activity, Clock, ChevronLeft, ChevronRight, Monitor, Sparkles, Sunrise, CheckCircle, Circle, Trash2, Edit2, Save, MessageCircle, Send, Bell, BellOff, X, Mic, Square, FileText, RefreshCw, Volume2, Zap, Moon, Calendar, Eye, ExternalLink, Plus, BookOpen, Terminal, Tag, VolumeX, Sparkle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import './index.css';
 
 const NAV_ITEMS = [
   { key: 'overview', label: 'Overview', icon: Activity },
+  { key: 'dictation', label: 'Voice Dictation & Snippets', icon: Mic },
+  { key: 'booking', label: 'Computer Use & Outlook', icon: Calendar },
   { key: 'tasks', label: 'Tasks', icon: CheckCircle },
   { key: 'meetings', label: 'Meetings', icon: Mic },
   { key: 'chat', label: 'AI Assistant', icon: MessageCircle },
@@ -43,8 +45,200 @@ function App() {
   const [meetingTitle, setMeetingTitle] = useState('');
   const [meetingBusy, setMeetingBusy] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
-  const [meetingError, setMeetingError] = useState('');
-  const transcriptEndRef = useRef(null);
+  // Computer Use & Outlook Booking States
+  const [visionAnalysis, setVisionAnalysis] = useState(null);
+  const [loadingVision, setLoadingVision] = useState(false);
+  const [quickBooking, setQuickBooking] = useState(false);
+  const [bookingStatus, setBookingStatus] = useState(null);
+  const [upcomingAlerts, setUpcomingAlerts] = useState([]);
+
+  // Dictation States
+  const [dictionary, setDictionary] = useState([]);
+  const [snippets, setSnippets] = useState([]);
+  const [dictationSettings, setDictationSettings] = useState({});
+  const [newTermInput, setNewTermInput] = useState('');
+  const [newSnippetForm, setNewSnippetForm] = useState({ trigger: '', expansion: '', description: '' });
+  const [dictationTestInput, setDictationTestInput] = useState('Let us schedule a meeting at 2... actually scratch that, 3 PM with camel case user profile');
+  const [dictationResult, setDictationResult] = useState(null);
+  const [loadingDictation, setLoadingDictation] = useState(false);
+
+  const fetchDictationData = async () => {
+    try {
+      const [dictRes, snipRes, setRes] = await Promise.all([
+        fetch('http://localhost:3001/api/dictation/dictionary'),
+        fetch('http://localhost:3001/api/dictation/snippets'),
+        fetch('http://localhost:3001/api/dictation/settings')
+      ]);
+      setDictionary(await dictRes.json());
+      setSnippets(await snipRes.json());
+      setDictationSettings(await setRes.json());
+    } catch (err) {
+      console.error('Failed to fetch dictation data', err);
+    }
+  };
+
+  const handleAddDictionaryTerm = async () => {
+    if (!newTermInput.trim()) return;
+    try {
+      const res = await fetch('http://localhost:3001/api/dictation/dictionary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ term: newTermInput.trim() })
+      });
+      const data = await res.json();
+      if (data.dictionary) setDictionary(data.dictionary);
+      setNewTermInput('');
+    } catch (err) {
+      console.error('Failed to add dictionary term', err);
+    }
+  };
+
+  const handleRemoveDictionaryTerm = async (term) => {
+    try {
+      const res = await fetch(`http://localhost:3001/api/dictation/dictionary/${encodeURIComponent(term)}`, {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      if (data.dictionary) setDictionary(data.dictionary);
+    } catch (err) {
+      console.error('Failed to remove term', err);
+    }
+  };
+
+  const handleAddSnippet = async () => {
+    if (!newSnippetForm.trigger.trim() || !newSnippetForm.expansion.trim()) return;
+    try {
+      const res = await fetch('http://localhost:3001/api/dictation/snippets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newSnippetForm)
+      });
+      const data = await res.json();
+      if (data.snippets) setSnippets(data.snippets);
+      setNewSnippetForm({ trigger: '', expansion: '', description: '' });
+    } catch (err) {
+      console.error('Failed to add snippet', err);
+    }
+  };
+
+  const handleDeleteSnippet = async (id) => {
+    try {
+      const res = await fetch(`http://localhost:3001/api/dictation/snippets/${id}`, {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      if (data.snippets) setSnippets(data.snippets);
+    } catch (err) {
+      console.error('Failed to delete snippet', err);
+    }
+  };
+
+  const handleProcessDictationTest = async (autoInject = false) => {
+    if (!dictationTestInput.trim()) return;
+    setLoadingDictation(true);
+    try {
+      const res = await fetch('http://localhost:3001/api/dictation/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: dictationTestInput,
+          autoInject
+        })
+      });
+      const data = await res.json();
+      setDictationResult(data);
+      if (autoInject && data.success) {
+        setBookingStatus({ type: 'success', message: `Injected "${data.result.text}" into active window!` });
+      }
+    } catch (err) {
+      console.error('Dictation processing failed', err);
+    } finally {
+      setLoadingDictation(false);
+    }
+  };
+
+  const fetchUpcomingAlerts = async () => {
+    try {
+      const res = await fetch('http://localhost:3001/api/notifications/upcoming');
+      const alerts = await res.json();
+      setUpcomingAlerts(alerts);
+    } catch (err) {
+      console.error('Failed to fetch upcoming alerts', err);
+    }
+  };
+
+  const triggerTestNotification = async () => {
+    try {
+      await fetch('http://localhost:3001/api/test-notification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: '🚨 Test Meeting & Task Notification',
+          body: 'Scribe desktop notification system is working perfectly live!'
+        })
+      });
+      setBookingStatus({ type: 'success', message: 'Fired test desktop notification!' });
+    } catch (err) {
+      setBookingStatus({ type: 'error', message: err.message });
+    }
+  };
+
+  const handleQuickBook = async () => {
+    setQuickBooking(true);
+    setBookingStatus({ type: 'info', message: 'Analyzing WeChat/Screen & opening Outlook meeting...' });
+    try {
+      const res = await fetch('http://localhost:3001/api/screen/quick-book', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setBookingStatus({
+          type: 'success',
+          message: `Opened Outlook Meeting for ${data.bookingDetails.contactName || 'Trainer'}! (${data.bookingDetails.subject})`,
+          data
+        });
+        setVisionAnalysis({ data: data.analysis });
+      } else {
+        setBookingStatus({ type: 'error', message: `Booking failed: ${data.error || 'Unknown error'}` });
+      }
+    } catch (err) {
+      setBookingStatus({ type: 'error', message: `Quick Book Error: ${err.message}` });
+    } finally {
+      setQuickBooking(false);
+    }
+  };
+
+  const handleAnalyzeScreen = async () => {
+    setLoadingVision(true);
+    try {
+      const res = await fetch('http://localhost:3001/api/screen/analyze', { method: 'POST' });
+      const data = await res.json();
+      setVisionAnalysis(data);
+    } catch (err) {
+      console.error('Failed to analyze screen', err);
+    } finally {
+      setLoadingVision(false);
+    }
+  };
+
+  const handleCustomBook = async (bookingData) => {
+    setQuickBooking(true);
+    try {
+      const res = await fetch('http://localhost:3001/api/outlook/book', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bookingData)
+      });
+      const data = await res.json();
+      if (data.success) {
+        setBookingStatus({ type: 'success', message: `Opened Outlook Meeting for ${bookingData.contactName || bookingData.subject || 'Trainer'}` });
+      } else {
+        setBookingStatus({ type: 'error', message: `Failed to open Outlook: ${data.error}` });
+      }
+    } catch (err) {
+      setBookingStatus({ type: 'error', message: err.message });
+    } finally {
+      setQuickBooking(false);
+    }
+  };
 
   useEffect(() => {
     fetchData(date);
@@ -61,6 +255,10 @@ function App() {
     fetchMorningTasks();
     fetchTasks();
     fetchMeetings();
+    fetchUpcomingAlerts();
+    fetchDictationData();
+    const interval = setInterval(fetchUpcomingAlerts, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   // Poll meeting status — keeps the live transcript and recording pill fresh
@@ -527,6 +725,15 @@ function App() {
             <p className="subtitle">{format(date, 'MMMM d, yyyy')}</p>
           </div>
           <div className="topbar-right">
+            <button
+              className="btn btn-primary btn-tab-book"
+              onClick={handleQuickBook}
+              disabled={quickBooking}
+              title="Scan active WeChat/screen and open pre-filled Outlook meeting window (Ctrl+Alt+M / F9)"
+            >
+              <Zap size={16} />
+              <span>{quickBooking ? 'Scanning & Booking...' : '1-Tab Book Meeting'}</span>
+            </button>
             {meetingActive && (
               <span className="recording-pill" title="Meeting capture is running">
                 <span className="recording-dot" /> REC
@@ -535,6 +742,434 @@ function App() {
             {dateSelector}
           </div>
         </header>
+
+        {bookingStatus && (
+          <div className={`toast-banner ${bookingStatus.type}`}>
+            <span>{bookingStatus.message}</span>
+            <button className="toast-close" onClick={() => setBookingStatus(null)}><X size={14} /></button>
+          </div>
+        )}
+
+        {/* ---------------- Universal Voice Dictation View ---------------- */}
+        {activeView === 'dictation' && (
+          <div className="dictation-view">
+            <div className="card hero-booking-card hero-dictation-card">
+              <div className="hero-booking-content">
+                <div className="hero-badge"><Mic size={14} /> Universal AI Voice Dictation & Intelligence</div>
+                <h2>Dictate Anywhere You Type on Windows</h2>
+                <p>
+                  Scribe works system-wide across <strong>Cursor, Notion, Gmail, Google Docs, WhatsApp, Slack, and Terminals</strong> without plugins.
+                  It automatically removes fillers ("um", "uh"), resolves self-corrections mid-sentence, formats developer syntax (camelCase, snake_case), and expands voice shortcuts.
+                </p>
+                <div className="shortcut-pill-group">
+                  <span className="shortcut-label">Global Windows Hotkeys:</span>
+                  <span className="shortcut-badge"><kbd className="kbd-shortcut">Ctrl</kbd> + <kbd className="kbd-shortcut">Alt</kbd> + <kbd className="kbd-shortcut">D</kbd></span>
+                  <span className="shortcut-badge"><kbd className="kbd-shortcut">Alt</kbd> + <kbd className="kbd-shortcut">D</kbd></span>
+                </div>
+              </div>
+            </div>
+
+            {/* Test & Live Injection Arena */}
+            <div className="grid">
+              <div className="card">
+                <div className="card-head">
+                  <h2><Sparkles size={19} /> Live Speech Polish & Universal Text Injection Arena</h2>
+                </div>
+
+                <div className="dictation-arena-box">
+                  <label className="field-label">Raw Spoken Speech / Input Text:</label>
+                  <textarea
+                    className="form-input dictation-textarea"
+                    rows={3}
+                    value={dictationTestInput}
+                    onChange={(e) => setDictationTestInput(e.target.value)}
+                    placeholder="e.g. Let's schedule a meeting for 2 PM... actually scratch that, 3 PM with camel case user profile"
+                  />
+
+                  <div className="dictation-action-row">
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => handleProcessDictationTest(false)}
+                      disabled={loadingDictation}
+                    >
+                      <Sparkles size={16} />
+                      <span>{loadingDictation ? 'Processing AI Cleanup...' : 'Polish Speech AI'}</span>
+                    </button>
+
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => handleProcessDictationTest(true)}
+                      disabled={loadingDictation}
+                      title="Polishes speech and automatically pastes into whatever app currently has focus"
+                    >
+                      <Send size={16} />
+                      <span>{loadingDictation ? 'Injecting...' : '🚀 Polish & Inject into Active App'}</span>
+                    </button>
+                  </div>
+
+                  {dictationResult?.result && (
+                    <div className="dictation-result-card">
+                      <div className="result-header">
+                        <span className="result-tag">✨ AI Polished Text</span>
+                        {dictationResult.result.isSnippet && (
+                          <span className="snippet-badge">Voice Snippet Expanded: "{dictationResult.result.snippetTrigger}"</span>
+                        )}
+                      </div>
+
+                      <div className="result-text-box">
+                        <p>{dictationResult.result.text}</p>
+                      </div>
+
+                      <div className="result-raw-comparison">
+                        <span>Original: <em>"{dictationResult.result.raw}"</em></span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Personal Dictionary Management */}
+              <div className="card">
+                <div className="card-head">
+                  <h2><BookOpen size={19} /> Personal Dictionary & Specialized Terms</h2>
+                </div>
+
+                <p className="section-desc">
+                  Add uncommon client names, technical jargon, or acronyms. Scribe AI will preserve exact spelling and casing during dictation.
+                </p>
+
+                <div className="add-term-row">
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="Add term (e.g. Antigravity, WeChat, Scribe)"
+                    value={newTermInput}
+                    onChange={(e) => setNewTermInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddDictionaryTerm()}
+                  />
+                  <button className="btn btn-primary" onClick={handleAddDictionaryTerm}>
+                    <Plus size={16} /> Add Term
+                  </button>
+                </div>
+
+                <div className="terms-chip-cloud">
+                  {dictionary && dictionary.length > 0 ? (
+                    dictionary.map((term, index) => (
+                      <span key={index} className="term-chip">
+                        <span>{term}</span>
+                        <button className="chip-del-btn" onClick={() => handleRemoveDictionaryTerm(term)}>
+                          <X size={12} />
+                        </button>
+                      </span>
+                    ))
+                  ) : (
+                    <span className="empty-text">No custom terms added yet.</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Custom Voice Snippets Manager */}
+            <div className="card">
+              <div className="card-head">
+                <h2><FileText size={19} /> Custom Voice Shortcuts & Snippets</h2>
+              </div>
+
+              <p className="section-desc">
+                Speak a short trigger phrase (e.g., <strong>"my link"</strong> or <strong>"my bio"</strong>) to automatically expand into full text, links, or code templates.
+              </p>
+
+              {/* Add Snippet Form */}
+              <div className="add-snippet-card">
+                <h4>Add New Voice Snippet</h4>
+                <div className="snippet-form-grid">
+                  <div className="field-item">
+                    <label>Voice Trigger Phrase</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="e.g. my link, my bio, react component"
+                      value={newSnippetForm.trigger}
+                      onChange={(e) => setNewSnippetForm({ ...newSnippetForm, trigger: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="field-item">
+                    <label>Description</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="e.g. Calendly scheduling link"
+                      value={newSnippetForm.description}
+                      onChange={(e) => setNewSnippetForm({ ...newSnippetForm, description: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="field-item full-width">
+                    <label>Expanded Content</label>
+                    <textarea
+                      className="form-input snippet-expansion-textarea"
+                      rows={2}
+                      placeholder="e.g. https://calendly.com/my-meeting-link"
+                      value={newSnippetForm.expansion}
+                      onChange={(e) => setNewSnippetForm({ ...newSnippetForm, expansion: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="form-action-row">
+                  <button className="btn btn-primary" onClick={handleAddSnippet}>
+                    <Plus size={16} /> Save Voice Snippet
+                  </button>
+                </div>
+              </div>
+
+              {/* Snippets List */}
+              <div className="snippets-list-grid">
+                {snippets && snippets.length > 0 ? (
+                  snippets.map((snip) => (
+                    <div key={snip.id} className="snippet-item-card">
+                      <div className="snippet-card-head">
+                        <span className="trigger-badge">Trigger: "{snip.trigger}"</span>
+                        {snip.description && <span className="snip-desc">{snip.description}</span>}
+                        <button className="btn-del-snip" onClick={() => handleDeleteSnippet(snip.id)}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                      <div className="snippet-card-body">
+                        <pre>{snip.expansion}</pre>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <span className="empty-text">No voice snippets added yet.</span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ---------------- Computer Use & Outlook Booking View ---------------- */}
+        {activeView === 'booking' && (
+          <div className="booking-view">
+            <div className="card hero-booking-card">
+              <div className="hero-booking-content">
+                <div className="hero-badge"><Zap size={14} /> Computer Use & Screen Intelligence</div>
+                <h2>Automated Outlook Meeting Booking</h2>
+                <p>
+                  When you are chatting with a Country Trainer in <strong>WeChat</strong> (or any app), Scribe can read your active conversation, understand context, extract trainer names and proposed meeting times, and launch Outlook with pre-filled event details with <strong>1 Tab / 1 Click</strong>.
+                </p>
+                <div className="shortcut-pill-group">
+                  <span className="shortcut-label">Global Windows Shortcuts:</span>
+                  <span className="shortcut-badge"><kbd className="kbd-shortcut">Ctrl</kbd> + <kbd className="kbd-shortcut">Alt</kbd> + <kbd className="kbd-shortcut">M</kbd></span>
+                  <span className="shortcut-badge"><kbd className="kbd-shortcut">F9</kbd></span>
+                  <span className="shortcut-badge"><kbd className="kbd-shortcut">Ctrl</kbd> + <kbd className="kbd-shortcut">Shift</kbd> + <kbd className="kbd-shortcut">M</kbd></span>
+                </div>
+                <div className="hero-actions">
+                  <button
+                    className="btn btn-primary btn-hero-action"
+                    onClick={handleQuickBook}
+                    disabled={quickBooking}
+                  >
+                    <Zap size={18} />
+                    <span>{quickBooking ? 'Scanning Chat & Opening Outlook...' : '⚡ 1-Tab Book Outlook Meeting'}</span>
+                  </button>
+
+                  <button
+                    className="btn btn-secondary btn-hero-action"
+                    onClick={handleAnalyzeScreen}
+                    disabled={loadingVision}
+                  >
+                    <Eye size={18} />
+                    <span>{loadingVision ? 'Analyzing Screen Vision...' : '🔍 Scan Active Screen Context'}</span>
+                  </button>
+
+                  <button
+                    className="btn btn-secondary btn-hero-action"
+                    onClick={triggerTestNotification}
+                    title="Fire a live desktop notification test on Windows"
+                  >
+                    <Bell size={18} />
+                    <span>Test Screen Notification</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Upcoming Meetings & Task Alerts Panel */}
+            {upcomingAlerts && upcomingAlerts.length > 0 && (
+              <div className="card alerts-card">
+                <div className="card-head">
+                  <h2><Bell size={19} /> Upcoming Meetings & Tasks Due (Next 24h)</h2>
+                </div>
+                <div className="upcoming-alerts-list">
+                  {upcomingAlerts.map((item, idx) => (
+                    <div key={idx} className={`alert-item ${item.type}`}>
+                      <div className="alert-icon">
+                        {item.type === 'meeting' ? <Calendar size={18} /> : <Clock size={18} />}
+                      </div>
+                      <div className="alert-details">
+                        <h4>{item.title}</h4>
+                        <p>{item.type === 'meeting' ? `Meeting with ${item.contactName || 'Trainer'}` : 'Scheduled Task'}</p>
+                      </div>
+                      <div className="alert-badge">
+                        {item.minsLeft <= 0 ? 'DUE NOW' : `In ${item.minsLeft} mins`}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Vision Analysis Results & Outlook Booking Form */}
+            <div className="grid">
+              <div className="card">
+                <div className="card-head">
+                  <h2><Eye size={19} /> Active Screen Vision Context</h2>
+                  {visionAnalysis?.capturedAt && (
+                    <span className="captured-tag">Scanned {format(new Date(visionAnalysis.capturedAt), 'HH:mm:ss')}</span>
+                  )}
+                </div>
+
+                {visionAnalysis?.data ? (
+                  <div className="vision-results-box">
+                    <div className="vision-header-chip">
+                      <span className={`confidence-dot ${visionAnalysis.data.confidence || 'high'}`} />
+                      <span>App: <strong>{visionAnalysis.data.appName || 'WeChat'}</strong></span>
+                      <span className="badge-chat">{visionAnalysis.data.isChat ? 'Chat App Detected' : 'General App'}</span>
+                    </div>
+
+                    <div className="vision-summary-text">
+                      <p>{visionAnalysis.data.summaryText || 'No summary text available.'}</p>
+                    </div>
+
+                    <div className="extracted-fields-grid">
+                      <div className="field-item">
+                        <label>Country Trainer / Contact</label>
+                        <input
+                          type="text"
+                          className="form-input"
+                          value={visionAnalysis.data.contactName || ''}
+                          onChange={(e) => setVisionAnalysis({
+                            ...visionAnalysis,
+                            data: { ...visionAnalysis.data, contactName: e.target.value }
+                          })}
+                        />
+                      </div>
+
+                      <div className="field-item">
+                        <label>Meeting Subject / Topic</label>
+                        <input
+                          type="text"
+                          className="form-input"
+                          value={visionAnalysis.data.topic || ''}
+                          onChange={(e) => setVisionAnalysis({
+                            ...visionAnalysis,
+                            data: { ...visionAnalysis.data, topic: e.target.value }
+                          })}
+                        />
+                      </div>
+
+                      <div className="field-row">
+                        <div className="field-item">
+                          <label>Date</label>
+                          <input
+                            type="date"
+                            className="form-input"
+                            value={visionAnalysis.data.proposedDate || ''}
+                            onChange={(e) => setVisionAnalysis({
+                              ...visionAnalysis,
+                              data: { ...visionAnalysis.data, proposedDate: e.target.value }
+                            })}
+                          />
+                        </div>
+
+                        <div className="field-item">
+                          <label>Time</label>
+                          <input
+                            type="time"
+                            className="form-input"
+                            value={visionAnalysis.data.proposedTime || ''}
+                            onChange={(e) => setVisionAnalysis({
+                              ...visionAnalysis,
+                              data: { ...visionAnalysis.data, proposedTime: e.target.value }
+                            })}
+                          />
+                        </div>
+
+                        <div className="field-item">
+                          <label>Duration (mins)</label>
+                          <select
+                            className="form-input"
+                            value={visionAnalysis.data.durationMinutes || 30}
+                            onChange={(e) => setVisionAnalysis({
+                              ...visionAnalysis,
+                              data: { ...visionAnalysis.data, durationMinutes: Number(e.target.value) }
+                            })}
+                          >
+                            <option value={15}>15 mins</option>
+                            <option value={30}>30 mins</option>
+                            <option value={45}>45 mins</option>
+                            <option value={60}>60 mins</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="form-action-row">
+                      <button
+                        className="btn btn-primary"
+                        onClick={() => handleCustomBook(visionAnalysis.data)}
+                        disabled={quickBooking}
+                      >
+                        <Calendar size={16} />
+                        <span>Launch Outlook Meeting Window</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="empty-vision-state">
+                    <Eye size={40} className="empty-icon" />
+                    <h3>No Active Screen Context Scanned Yet</h3>
+                    <p>Open WeChat or any active chat window, then click <strong>"Scan Active Screen Context"</strong> or press <strong>Alt+Shift+M</strong>.</p>
+                  </div>
+                )}
+              </div>
+
+              {/* How it works card */}
+              <div className="card">
+                <div className="card-head">
+                  <h2><Calendar size={19} /> How 1-Tab Outlook Booking Works</h2>
+                </div>
+                <div className="info-steps-list">
+                  <div className="info-step">
+                    <div className="step-num">1</div>
+                    <div className="step-text">
+                      <h4>Open Active Chat in WeChat</h4>
+                      <p>Open your WeChat conversation with the country trainer or team member on your screen.</p>
+                    </div>
+                  </div>
+
+                  <div className="info-step">
+                    <div className="step-num">2</div>
+                    <div className="step-text">
+                      <h4>Press 1-Tab Hotkey (Alt+Shift+M)</h4>
+                      <p>Press <strong>Alt+Shift+M</strong> from any application on Windows or click <strong>1-Tab Book Meeting</strong>.</p>
+                    </div>
+                  </div>
+
+                  <div className="info-step">
+                    <div className="step-num">3</div>
+                    <div className="step-text">
+                      <h4>Outlook Window Launches Pre-filled</h4>
+                      <p>Scribe parses the trainer name, topic, and meeting slot, then automatically opens Outlook's event window pre-filled for instant booking.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ---------------- Overview ---------------- */}
         {activeView === 'overview' && (

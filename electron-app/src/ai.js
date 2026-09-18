@@ -7,16 +7,16 @@ let geminiClients = [];
 
 const TEXT_MODEL_CHAIN = [
     'gemini-2.5-flash',
-    'gemini-2.0-flash-lite',
-    'gemini-2.0-flash',
+    'gemini-3.5-flash-lite',
 ];
 
 const AUDIO_MODEL_CHAIN = [
-    'gemini-2.5-flash-lite',
-    'gemini-2.0-flash-lite',
+    'gemini-3.5-flash-lite',
     'gemini-2.5-flash',
-    'gemini-2.0-flash',
 ];
+
+// The gateway rejects bare model names with 400 "Ambiguous model ... use provider/model prefix".
+const OMNIROUTE_DEFAULT_MODEL = 'auto/best-fast';
 
 function isPlaceholder(key) {
     if (!key) return true;
@@ -39,7 +39,7 @@ function init() {
             keys = ['sk-omniroute'];
         }
 
-        const model = process.env[modelEnvKey] || defaultModel;
+        const model = (modelEnvKey && process.env[modelEnvKey]) || defaultModel;
         keys.forEach((apiKey, index) => {
             providersList.push({
                 name: keys.length > 1 ? `${name} (Key ${index + 1})` : name,
@@ -51,16 +51,6 @@ function init() {
             });
         });
     };
-
-    // 0. OmniRoute Gateway (diegosouzapw/OmniRoute - 290+ providers & 500+ models)
-    const omniBase = process.env.OMNIROUTE_BASE_URL ? process.env.OMNIROUTE_BASE_URL.replace(/\/$/, '') : 'http://localhost:8080/v1';
-    const omniEndpoint = process.env.OMNIROUTE_ENDPOINT || `${omniBase}/chat/completions`;
-    const hasOmniConfig = process.env.OMNIROUTE_BASE_URL || process.env.OMNIROUTE_ENDPOINT || (process.env.OMNIROUTE_API_KEY && !isPlaceholder(process.env.OMNIROUTE_API_KEY));
-    if (hasOmniConfig) {
-        addOpenAiProvider('OmniRoute Gateway', 'OMNIROUTE_API_KEY', omniEndpoint, 'auto', 'OMNIROUTE_MODEL', {
-            'X-Title': 'Work Tracker Desktop'
-        }, true);
-    }
 
     // 1. OpenRouter
     addOpenAiProvider('OpenRouter', 'OPENROUTER_API_KEY', 'https://openrouter.ai/api/v1/chat/completions', 'google/gemini-2.5-flash', 'OPENROUTER_MODEL', {
@@ -103,6 +93,25 @@ function init() {
         });
     }
 
+    // 9. OmniRoute Gateway (diegosouzapw/OmniRoute - 290+ providers & 500+ models).
+    // Registered last: the gateway routes to free backends that answer in 7-14s, so it is a
+    // safety net for when the direct providers above are exhausted, not a fast path.
+    const omniBase = process.env.OMNIROUTE_BASE_URL ? process.env.OMNIROUTE_BASE_URL.replace(/\/$/, '') : 'http://localhost:8080/v1';
+    const omniEndpoint = process.env.OMNIROUTE_ENDPOINT || `${omniBase}/chat/completions`;
+    const hasOmniConfig = process.env.OMNIROUTE_BASE_URL || process.env.OMNIROUTE_ENDPOINT || (process.env.OMNIROUTE_API_KEY && !isPlaceholder(process.env.OMNIROUTE_API_KEY));
+    if (hasOmniConfig) {
+        // A machine-level OMNIROUTE_MODEL overrides .env (dotenv never replaces an existing
+        // process.env value), so an unprefixed id has to be corrected here rather than in .env.
+        let omniModel = process.env.OMNIROUTE_MODEL;
+        if (omniModel && !omniModel.includes('/')) {
+            log.warn(`[AI Engine] OMNIROUTE_MODEL='${omniModel}' has no provider/model prefix — using '${OMNIROUTE_DEFAULT_MODEL}'.`);
+            omniModel = null;
+        }
+        addOpenAiProvider('OmniRoute Gateway', 'OMNIROUTE_API_KEY', omniEndpoint, omniModel || OMNIROUTE_DEFAULT_MODEL, null, {
+            'X-Title': 'Work Tracker Desktop'
+        }, true);
+    }
+
     if (providersList.length === 0) {
         log.warn('[AI Engine] No API keys configured in environment variables — AI features disabled.');
     } else {
@@ -131,7 +140,8 @@ async function callOpenAiCompatibleApi(provider, contents) {
             if (typeof item === 'string') return { role: 'user', content: item };
             if (item.role && item.parts) {
                 const textPart = item.parts.find(p => p.text);
-                const audioPart = item.parts.find(p => p.inlineData);
+                const audioPart = item.parts.find(p => p.inlineData && p.inlineData.mimeType && p.inlineData.mimeType.startsWith('audio/'));
+                const imagePart = item.parts.find(p => p.inlineData && p.inlineData.mimeType && p.inlineData.mimeType.startsWith('image/'));
                 if (audioPart) {
                     return {
                         role: 'user',
@@ -142,6 +152,20 @@ async function callOpenAiCompatibleApi(provider, contents) {
                                 input_audio: {
                                     data: audioPart.inlineData.data,
                                     format: 'wav'
+                                }
+                            }
+                        ]
+                    };
+                }
+                if (imagePart) {
+                    return {
+                        role: 'user',
+                        content: [
+                            { type: 'text', text: textPart ? textPart.text : '' },
+                            {
+                                type: 'image_url',
+                                image_url: {
+                                    url: `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`
                                 }
                             }
                         ]
@@ -163,7 +187,8 @@ async function callOpenAiCompatibleApi(provider, contents) {
         headers,
         body: JSON.stringify({
             model: provider.model,
-            messages: messages
+            messages: messages,
+            stream: false
         })
     });
 
@@ -269,4 +294,15 @@ function transcribeAudio(base64Wav) {
     return generate(contents, { models: AUDIO_MODEL_CHAIN, retries: 2, label: 'Transcribe' });
 }
 
-module.exports = { init, isConfigured, getProviderInfo, generateText, transcribeAudio };
+function analyzeImage(base64Png, promptText) {
+    const contents = [{
+        role: 'user',
+        parts: [
+            { inlineData: { mimeType: 'image/png', data: base64Png } },
+            { text: promptText },
+        ],
+    }];
+    return generate(contents, { models: TEXT_MODEL_CHAIN, retries: 2, label: 'Vision' });
+}
+
+module.exports = { init, isConfigured, getProviderInfo, generateText, transcribeAudio, analyzeImage };

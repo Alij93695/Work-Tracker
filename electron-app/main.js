@@ -1,4 +1,4 @@
-const { app, Tray, Menu, nativeImage, BrowserWindow, Notification, powerMonitor, powerSaveBlocker, session, desktopCapturer, shell } = require('electron');
+const { app, Tray, Menu, nativeImage, BrowserWindow, Notification, powerMonitor, powerSaveBlocker, session, desktopCapturer, shell, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -147,7 +147,16 @@ function rebuildTrayMenu() {
     if (!tray) return;
     const meetingActive = meetings && meetings.isActive();
     const contextMenu = Menu.buildFromTemplate([
-        { label: 'Open Dashboard', click: createDashboard },
+        {
+            label: '⚡ 1-Tab Book Outlook Meeting (Ctrl+Alt+M / F9)',
+            click: async () => {
+                try {
+                    await fetch('http://127.0.0.1:3001/api/screen/quick-book', { method: 'POST' });
+                } catch (err) {
+                    log.error('[Tray] Quick book failed:', err);
+                }
+            }
+        },
         { type: 'separator' },
         {
             label: meetingActive ? '⏹ Stop Meeting Capture' : '🎙 Start Meeting Capture',
@@ -276,11 +285,71 @@ if (!gotTheLock) {
         });
         tracker.start();
 
-        startApiServer({ logsDir, tracker, meetings, getPowerStatus, trayIconPath });
-
         applyKeepAwake();
         applyLoginItem();
         rebuildTrayMenu();
+
+        // Automatically open the Scribe Dashboard window on app startup
+        createDashboard();
+
+        startApiServer({ logsDir, tracker, meetings, getPowerStatus, trayIconPath, createDashboard });
+
+        // Register Global Hotkeys for 1-Tab Outlook Meeting Booking
+        const hotkeys = ['Ctrl+Alt+M', 'Ctrl+Shift+M', 'Alt+Shift+M', 'F9'];
+        const runQuickBook = async (key) => {
+            log.info(`[Hotkey] ${key} triggered! Executing 1-Tab Outlook Meeting Booking...`);
+            try {
+                new Notification({
+                    title: `⚡ 1-Tab Hotkey (${key})`,
+                    body: 'Scanning WeChat/Screen & opening Outlook meeting window...',
+                    icon: trayIconPath
+                }).show();
+            } catch (e) { /* ignore */ }
+
+            try {
+                const res = await fetch('http://127.0.0.1:3001/api/screen/quick-book', { method: 'POST' });
+                const data = await res.json();
+                log.info('[Hotkey] Quick book result:', data);
+            } catch (err) {
+                log.error('[Hotkey] Quick book error:', err);
+                try {
+                    new Notification({
+                        title: '❌ Quick Book Error',
+                        body: err.message,
+                        icon: trayIconPath
+                    }).show();
+                } catch (e) { /* ignore */ }
+            }
+        };
+
+        hotkeys.forEach(key => {
+            try {
+                const registered = globalShortcut.register(key, () => runQuickBook(key));
+                log.info(`[Hotkey] Registered ${key}: ${registered}`);
+            } catch (err) {
+                log.warn(`[Hotkey] Could not register ${key}:`, err.message);
+            }
+        });
+
+        // Register Global Hotkeys for Universal Voice Dictation (Ctrl+Alt+D / Alt+D)
+        const dictationKeys = ['Ctrl+Alt+D', 'Alt+D'];
+        dictationKeys.forEach(key => {
+            try {
+                const ret = globalShortcut.register(key, async () => {
+                    log.info(`[Hotkey] Universal Dictation ${key} triggered!`);
+                    try {
+                        new Notification({
+                            title: `🎙 Universal Voice Dictation (${key})`,
+                            body: 'Universal text injection active. Open dashboard tab to test or dictate.',
+                            icon: trayIconPath
+                        }).show();
+                    } catch (e) { /* ignore */ }
+                });
+                log.info(`[Hotkey] Registered Dictation ${key}: ${ret}`);
+            } catch (err) {
+                log.warn(`[Hotkey] Could not register Dictation ${key}:`, err.message);
+            }
+        });
 
         // Keep the tray label in sync if a meeting is started/stopped via the API
         setInterval(rebuildTrayMenu, 10000);
@@ -290,6 +359,10 @@ if (!gotTheLock) {
 // Background app: keep running when all windows are closed
 app.on('window-all-closed', (e) => {
     e.preventDefault();
+});
+
+app.on('will-quit', () => {
+    globalShortcut.unregisterAll();
 });
 
 app.on('before-quit', async () => {
