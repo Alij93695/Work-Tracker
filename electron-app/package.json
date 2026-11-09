@@ -30,7 +30,8 @@
       "deleteAppDataOnUninstall": false
     },
     "extraResources": [
-      "ActiveWindow.exe"
+      "ActiveWindow.exe",
+      "src/whisper_worker.py"
     ]
   },
   "keywords": [],

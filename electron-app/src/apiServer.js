@@ -12,6 +12,7 @@ const ReminderEngine = require('./reminderEngine');
 const keyboardInjector = require('./keyboardInjector');
 const dictationAi = require('./dictationAi');
 const DictationStore = require('./dictationStore');
+const whisperEngine = require('./whisperEngine');
 const { readJsonSafe, writeJsonSafe } = require('./util');
 
 const PORT = 3001;
@@ -300,6 +301,11 @@ Provide a helpful, concise response. Use Markdown formatting. If they ask for a 
         res.json({ success: true, summary });
     }));
 
+    apiApp.post('/api/meetings/:id/live-notes', wrap(async (req, res) => {
+        const liveNotes = await meetings.generateLiveNotes(req.params.id);
+        res.json({ success: true, liveNotes });
+    }));
+
     apiApp.delete('/api/meetings/:id', wrap(async (req, res) => {
         meetings.delete(req.params.id);
         res.json({ success: true });
@@ -383,7 +389,8 @@ Provide a helpful, concise response. Use Markdown formatting. If they ask for a 
         let rawInput = text;
 
         if (audioBase64) {
-            rawInput = await ai.transcribeAudio(audioBase64);
+            const wRes = await whisperEngine.transcribe(audioBase64);
+            rawInput = wRes.text;
         }
 
         if (!rawInput || !rawInput.trim()) {
@@ -467,6 +474,16 @@ Provide a helpful, concise response. Use Markdown formatting. If they ask for a 
         const updated = dictationStore.saveSettings(req.body || {});
         res.json({ success: true, settings: updated });
     });
+
+    // ---------- open whisper engine status & configuration ----------
+    apiApp.get('/api/whisper/status', (req, res) => {
+        res.json(whisperEngine.getSettings());
+    });
+
+    apiApp.post('/api/whisper/settings', wrap(async (req, res) => {
+        const updated = await whisperEngine.saveSettings(req.body || {});
+        res.json({ success: true, settings: updated });
+    }));
 
     // ---------- listen (with EADDRINUSE retry) ----------
     let server = null;

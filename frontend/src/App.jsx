@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { format, subDays, addDays } from 'date-fns';
-import { Activity, Clock, ChevronLeft, ChevronRight, Monitor, Sparkles, Sunrise, CheckCircle, Circle, Trash2, Edit2, Save, MessageCircle, Send, Bell, BellOff, X, Mic, Square, FileText, RefreshCw, Volume2, Zap, Moon, Calendar, Eye, ExternalLink, Plus, BookOpen, Terminal, Tag, VolumeX, Sparkle } from 'lucide-react';
+import { Activity, Clock, ChevronLeft, ChevronRight, Monitor, Sparkles, Sunrise, CheckCircle, Circle, Trash2, Edit2, Save, MessageCircle, Send, Bell, BellOff, X, Mic, Square, FileText, RefreshCw, Volume2, Zap, Moon, Calendar, Eye, ExternalLink, Plus, BookOpen, Terminal, Tag, VolumeX, Sparkle, Copy, Check, Mail, ListChecks } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import './index.css';
 
@@ -37,6 +37,7 @@ function App() {
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const chatEndRef = useRef(null);
+  const transcriptEndRef = useRef(null);
 
   // Meeting States
   const [meetingStatus, setMeetingStatus] = useState(null);
@@ -45,6 +46,11 @@ function App() {
   const [meetingTitle, setMeetingTitle] = useState('');
   const [meetingBusy, setMeetingBusy] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
+  const [whisperStatus, setWhisperStatus] = useState({ mode: 'auto', model: 'base', isReady: true });
+  const [takingLiveNotes, setTakingLiveNotes] = useState(false);
+  const [liveMeetingTab, setLiveMeetingTab] = useState('split'); // 'notes' | 'transcript' | 'split'
+  const [completedMeetingTab, setCompletedMeetingTab] = useState('notes'); // 'notes' | 'email' | 'transcript'
+  const [copyFeedback, setCopyFeedback] = useState(null);
   // Computer Use & Outlook Booking States
   const [visionAnalysis, setVisionAnalysis] = useState(null);
   const [loadingVision, setLoadingVision] = useState(false);
@@ -257,6 +263,7 @@ function App() {
     fetchMeetings();
     fetchUpcomingAlerts();
     fetchDictationData();
+    fetchWhisperStatus();
     const interval = setInterval(fetchUpcomingAlerts, 10000);
     return () => clearInterval(interval);
   }, []);
@@ -476,6 +483,33 @@ function App() {
       setChatMessages(prev => [...prev, { role: 'ai', content: 'Failed to connect to the AI assistant.' }]);
     }
     setChatLoading(false);
+  };
+
+  const fetchWhisperStatus = async () => {
+    try {
+      const res = await fetch('http://localhost:3001/api/whisper/status');
+      if (res.ok) setWhisperStatus(await res.json());
+    } catch (e) { /* ignore */ }
+  };
+
+  const handleTakeLiveNotes = async () => {
+    if (!meetingStatus?.meeting?.id) return;
+    setTakingLiveNotes(true);
+    try {
+      await fetch(`http://localhost:3001/api/meetings/${meetingStatus.meeting.id}/live-notes`, { method: 'POST' });
+      await fetchMeetingStatus();
+    } catch (err) {
+      console.error('Failed to take live notes', err);
+    } finally {
+      setTakingLiveNotes(false);
+    }
+  };
+
+  const copyToClipboard = (text, label) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setCopyFeedback(label);
+    setTimeout(() => setCopyFeedback(null), 2500);
   };
 
   // Meeting functions
@@ -1374,7 +1408,13 @@ function App() {
         {activeView === 'meetings' && (
           <div className="card">
             <div className="card-head">
-              <h2><Mic size={19} /> Meetings</h2>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <h2><Mic size={19} /> Meetings</h2>
+                <span className="whisper-badge" title="Local Open Whisper (faster-whisper) transcription active">
+                  <span className="whisper-dot" />
+                  Local Open Whisper ({whisperStatus.model || 'base'}) · 100% Free & Local
+                </span>
+              </div>
               {meetingActive ? (
                 <button className="btn btn-danger" onClick={stopMeeting} disabled={meetingBusy}>
                   <Square size={14} /> {meetingBusy ? 'Stopping…' : 'Stop & Summarize'}
@@ -1400,36 +1440,144 @@ function App() {
 
             {meetingActive ? (
               <div>
-                <div className="meeting-live-header">
-                  <span className="recording-dot" />
-                  <strong>{meetingStatus.meeting.title}</strong>
-                  <span className="hint">started {formatMeetingTime(meetingStatus.meeting.startedAt)}</span>
-                  {meetingStatus.capture && meetingStatus.capture.system && (
-                    <span className="capture-badge"><Volume2 size={12} /> Listening to system audio</span>
-                  )}
-                  {meetingStatus.pendingChunks > 0 && (
-                    <span className="hint small">transcribing {meetingStatus.pendingChunks} chunk(s)…</span>
-                  )}
+                <div className="meeting-control-bar">
+                  <div className="meeting-live-header" style={{ marginBottom: 0 }}>
+                    <span className="recording-dot" />
+                    <strong>{meetingStatus.meeting.title}</strong>
+                    <span className="hint">started {formatMeetingTime(meetingStatus.meeting.startedAt)}</span>
+                    {meetingStatus.capture && meetingStatus.capture.system && (
+                      <span className="capture-badge"><Volume2 size={12} /> Listening via Whisper</span>
+                    )}
+                    {meetingStatus.pendingChunks > 0 && (
+                      <span className="hint small">transcribing {meetingStatus.pendingChunks} chunk(s)…</span>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div className="meeting-view-tabs">
+                      <button
+                        className={`view-tab-btn ${liveMeetingTab === 'split' ? 'active' : ''}`}
+                        onClick={() => setLiveMeetingTab('split')}
+                      >
+                        <ListChecks size={13} /> Split View
+                      </button>
+                      <button
+                        className={`view-tab-btn ${liveMeetingTab === 'notes' ? 'active' : ''}`}
+                        onClick={() => setLiveMeetingTab('notes')}
+                      >
+                        <FileText size={13} /> Live Notes
+                      </button>
+                      <button
+                        className={`view-tab-btn ${liveMeetingTab === 'transcript' ? 'active' : ''}`}
+                        onClick={() => setLiveMeetingTab('transcript')}
+                      >
+                        <Mic size={13} /> Transcript
+                      </button>
+                    </div>
+
+                    <button
+                      className="btn-take-notes"
+                      onClick={handleTakeLiveNotes}
+                      disabled={takingLiveNotes || liveSegments.length === 0}
+                      title="Instantly synthesize live notes from discussion so far"
+                    >
+                      <Sparkles size={13} />
+                      {takingLiveNotes ? 'Synthesizing...' : '⚡ Take Notes Now'}
+                    </button>
+                  </div>
                 </div>
+
                 {meetingStatus.meeting.error && (
                   <p className="warn-text">Capture warning: {meetingStatus.meeting.error}</p>
                 )}
-                <div className="transcript-box">
-                  {liveSegments.length === 0 ? (
-                    <p className="hint pad">
-                      Listening to your meeting's audio… The live transcript appears here about 20-40 seconds
-                      after speech is detected. No bot joins the call, the microphone stays off, and the meeting
-                      app can't see this — audio is captured locally from this PC.
-                    </p>
-                  ) : (
-                    liveSegments.map((seg, i) => (
-                      <div key={i} className="transcript-segment">
-                        <div className="transcript-time">{seg.start?.split('T')[1] || ''}</div>
-                        <div className="transcript-text">{seg.text}</div>
+
+                <div className={liveMeetingTab === 'split' ? 'live-meeting-grid' : ''}>
+                  {/* LIVE NOTES PANEL */}
+                  {(liveMeetingTab === 'split' || liveMeetingTab === 'notes') && (
+                    <div className="live-notes-panel">
+                      <div className="live-notes-header">
+                        <h4><FileText size={15} /> Real-Time Meeting Notes</h4>
+                        {meetingStatus.meeting.liveNotes?.lastUpdated && (
+                          <span className="hint small">Updated: {meetingStatus.meeting.liveNotes.lastUpdated.split('T')[1]}</span>
+                        )}
                       </div>
-                    ))
+
+                      {meetingStatus.meeting.liveNotes && (meetingStatus.meeting.liveNotes.keyPoints?.length > 0 || meetingStatus.meeting.liveNotes.decisions?.length > 0 || meetingStatus.meeting.liveNotes.actionItems?.length > 0) ? (
+                        <>
+                          {meetingStatus.meeting.liveNotes.summary && (
+                            <div className="note-section-card">
+                              <h5><Sparkles size={13} /> Discussion Overview</h5>
+                              <p style={{ fontSize: '0.86rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                                {meetingStatus.meeting.liveNotes.summary}
+                              </p>
+                            </div>
+                          )}
+
+                          {meetingStatus.meeting.liveNotes.keyPoints?.length > 0 && (
+                            <div className="note-section-card">
+                              <h5><ListChecks size={13} /> Key Points Discussed</h5>
+                              <ul className="note-bullets-list">
+                                {meetingStatus.meeting.liveNotes.keyPoints.map((pt, i) => (
+                                  <li key={i}>{pt}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {meetingStatus.meeting.liveNotes.decisions?.length > 0 && (
+                            <div className="note-section-card decisions">
+                              <h5>⚖ Decisions & Agreements</h5>
+                              <ul className="note-bullets-list decisions-list">
+                                {meetingStatus.meeting.liveNotes.decisions.map((dec, i) => (
+                                  <li key={i}>{dec}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {meetingStatus.meeting.liveNotes.actionItems?.length > 0 && (
+                            <div className="note-section-card actions">
+                              <h5>✓ Action Items Detected</h5>
+                              <ul className="note-bullets-list actions-list">
+                                {meetingStatus.meeting.liveNotes.actionItems.map((act, i) => (
+                                  <li key={i}>{act}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div style={{ textAlign: 'center', padding: '36px 14px', color: 'var(--text-muted)' }}>
+                          <FileText size={30} style={{ opacity: 0.35, marginBottom: '8px' }} />
+                          <p style={{ fontSize: '0.86rem', margin: 0 }}>
+                            {liveSegments.length < 2
+                              ? 'Listening for speech with Local Whisper... Notes will automatically organize as discussion happens.'
+                              : 'Click "⚡ Take Notes Now" to generate live structured notes from conversation so far.'}
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   )}
-                  <div ref={transcriptEndRef} />
+
+                  {/* VERBATIM TRANSCRIPT */}
+                  {(liveMeetingTab === 'split' || liveMeetingTab === 'transcript') && (
+                    <div className="transcript-box" style={{ maxHeight: '440px' }}>
+                      {liveSegments.length === 0 ? (
+                        <p className="hint pad">
+                          Listening to meeting audio with Local Open Whisper (mic stays off).
+                          Live transcript appears here automatically in ~20-second segments.
+                        </p>
+                      ) : (
+                        liveSegments.map((seg, i) => (
+                          <div key={i} className="transcript-segment">
+                            <div className="transcript-time">{seg.start?.split('T')[1] || ''}</div>
+                            <div className="transcript-text">{seg.text}</div>
+                          </div>
+                        ))
+                      )}
+                      <div ref={transcriptEndRef} />
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (
@@ -1437,8 +1585,7 @@ function App() {
                 <p className="hint intro">
                   Capture live meeting context without inviting a bot to the call. Scribe listens to the
                   system audio of your Zoom/Teams/VooV meeting locally on this PC (microphone stays off),
-                  streams a live transcript, and generates an AI summary with suggested tasks when you stop —
-                  tasks are only added to your list after you approve them.
+                  transcribes with <strong>Local Open Whisper</strong>, generates live rolling notes, and creates an Executive Summary, Action Items & Follow-up Email draft when you stop.
                 </p>
 
                 {selectedMeeting && (
@@ -1446,35 +1593,111 @@ function App() {
                     <div className="card-head">
                       <h3>{selectedMeeting.title}</h3>
                       <div className="btn-row">
+                        {copyFeedback && (
+                          <span className="copy-feedback-pill">
+                            <Check size={12} /> {copyFeedback}
+                          </span>
+                        )}
+                        {selectedMeeting.summary && (
+                          <button
+                            className="btn btn-secondary sm"
+                            onClick={() => copyToClipboard(selectedMeeting.summary, 'Report Copied!')}
+                            title="Copy full markdown report"
+                          >
+                            <Copy size={13} /> Copy Report
+                          </button>
+                        )}
+                        {selectedMeeting.emailDraft && (
+                          <button
+                            className="btn btn-secondary sm"
+                            onClick={() => copyToClipboard(selectedMeeting.emailDraft, 'Email Copied!')}
+                            title="Copy ready-to-send follow-up email draft"
+                          >
+                            <Mail size={13} /> Copy Follow-up Email
+                          </button>
+                        )}
                         <button
                           className="btn btn-primary"
                           onClick={() => summarizeMeeting(selectedMeeting.id)}
                           disabled={summarizing || (selectedMeeting.segments || []).length === 0}
                         >
-                          <RefreshCw size={13} /> {summarizing ? 'Summarizing…' : (selectedMeeting.summary ? 'Regenerate Summary' : 'Generate Summary')}
+                          <RefreshCw size={13} /> {summarizing ? 'Summarizing…' : (selectedMeeting.summary ? 'Regenerate Report' : 'Generate Report')}
                         </button>
                         <button className="icon-btn" onClick={() => setSelectedMeeting(null)} title="Close">
                           <X size={14} />
                         </button>
                       </div>
                     </div>
+
+                    <div className="meeting-view-tabs" style={{ marginBottom: '14px', width: 'fit-content' }}>
+                      <button
+                        className={`view-tab-btn ${completedMeetingTab === 'notes' ? 'active' : ''}`}
+                        onClick={() => setCompletedMeetingTab('notes')}
+                      >
+                        <FileText size={13} /> Executive Report & Action Items
+                      </button>
+                      {selectedMeeting.emailDraft && (
+                        <button
+                          className={`view-tab-btn ${completedMeetingTab === 'email' ? 'active' : ''}`}
+                          onClick={() => setCompletedMeetingTab('email')}
+                        >
+                          <Mail size={13} /> Follow-up Email Draft
+                        </button>
+                      )}
+                      <button
+                        className={`view-tab-btn ${completedMeetingTab === 'transcript' ? 'active' : ''}`}
+                        onClick={() => setCompletedMeetingTab('transcript')}
+                      >
+                        <Mic size={13} /> Transcript ({(selectedMeeting.segments || []).length})
+                      </button>
+                    </div>
+
                     <p className="hint small">
                       {formatMeetingTime(selectedMeeting.startedAt)}
                       {selectedMeeting.endedAt ? ` — ${formatMeetingTime(selectedMeeting.endedAt)}` : ''}
                       {' · '}{(selectedMeeting.segments || []).length} transcript segment(s)
                       {selectedMeeting.status === 'processing' ? ' · finishing transcription…' : ''}
                     </p>
-                    {selectedMeeting.summary ? (
-                      <div className="markdown-body">
-                        <ReactMarkdown>{selectedMeeting.summary}</ReactMarkdown>
-                      </div>
-                    ) : (
-                      <p className="hint">
-                        {(selectedMeeting.segments || []).length === 0
-                          ? 'No speech was captured in this meeting.'
-                          : 'No summary yet — click Generate Summary.'}
-                      </p>
+
+                    {completedMeetingTab === 'notes' && (
+                      <>
+                        {selectedMeeting.summary ? (
+                          <div className="markdown-body">
+                            <ReactMarkdown>{selectedMeeting.summary}</ReactMarkdown>
+                          </div>
+                        ) : (
+                          <p className="hint">
+                            {(selectedMeeting.segments || []).length === 0
+                              ? 'No speech was captured in this meeting.'
+                              : 'No summary yet — click Generate Report.'}
+                          </p>
+                        )}
+                      </>
                     )}
+
+                    {completedMeetingTab === 'email' && selectedMeeting.emailDraft && (
+                      <div className="email-draft-box">
+                        <pre style={{ margin: 0, fontFamily: 'inherit', whiteSpace: 'pre-wrap' }}>
+                          {selectedMeeting.emailDraft}
+                        </pre>
+                      </div>
+                    )}
+
+                    {completedMeetingTab === 'transcript' && (
+                      <div className="transcript-box compact">
+                        {(selectedMeeting.segments || []).length === 0 ? (
+                          <p className="hint">No transcript available.</p>
+                        ) : (
+                          selectedMeeting.segments.map((seg, i) => (
+                            <div key={i} className="transcript-segment">
+                              <div className="transcript-time">{seg.start?.split('T')[1] || ''}</div>
+                              <div className="transcript-text">{seg.text}</div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+
                     {(selectedMeeting.suggestedTasks || []).length > 0 && (
                       <div className="suggested-tasks">
                         <h4><CheckCircle size={15} /> Suggested Tasks <span className="hint small">— added to My Tasks only after you approve</span></h4>
@@ -1492,19 +1715,6 @@ function App() {
                           </div>
                         ))}
                       </div>
-                    )}
-                    {(selectedMeeting.segments || []).length > 0 && (
-                      <details className="transcript-details">
-                        <summary>Full transcript</summary>
-                        <div className="transcript-box compact">
-                          {selectedMeeting.segments.map((seg, i) => (
-                            <div key={i} className="transcript-segment">
-                              <div className="transcript-time">{seg.start?.split('T')[1] || ''}</div>
-                              <div className="transcript-text">{seg.text}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
                     )}
                   </div>
                 )}
