@@ -113,8 +113,10 @@ class WhisperEngine {
         writeJsonSafe(this.settingsFile, toSave);
         log.info('[WhisperEngine] Saved settings:', toSave);
 
-        if (modelChanged && this.workerProcess) {
+        if (modelChanged) {
             await this.restartWorker();
+        } else if (!this.workerProcess) {
+            await this.ensureWorker().catch(() => {});
         }
 
         return this.getSettings();

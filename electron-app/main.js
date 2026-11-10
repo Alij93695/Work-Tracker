@@ -65,7 +65,7 @@ log.init(logsDir);
 if (migratedFrom) log.info(`[Migration] Copied legacy data from ${migratedFrom} (originals left untouched).`);
 
 const settingsFile = path.join(logsDir, 'settings.json');
-const settings = Object.assign({ keepAwake: true, launchAtLogin: true, hideFromScreenShare: true }, readJsonSafe(settingsFile, {}));
+const settings = Object.assign({ keepAwake: true, launchAtLogin: true, hideFromScreenShare: false }, readJsonSafe(settingsFile, {}));
 function saveSettings() {
     try { writeJsonSafe(settingsFile, settings); } catch (e) { log.error('Failed to save settings:', e); }
 }
@@ -103,14 +103,21 @@ function getPowerStatus() {
 
 // ------------- dashboard window -------------
 function createDashboard() {
-    if (dashboardWindow) {
+    log.info('[Dashboard] createDashboard() requested.');
+    if (dashboardWindow && !dashboardWindow.isDestroyed()) {
         if (dashboardWindow.isMinimized()) dashboardWindow.restore();
+        dashboardWindow.show();
+        dashboardWindow.setAlwaysOnTop(true);
         dashboardWindow.focus();
+        dashboardWindow.setAlwaysOnTop(false);
         return;
     }
     dashboardWindow = new BrowserWindow({
         width: 1240,
         height: 860,
+        minWidth: 900,
+        minHeight: 600,
+        show: true,
         icon: trayIconPath,
         webPreferences: {
             nodeIntegration: false,
@@ -119,11 +126,29 @@ function createDashboard() {
         },
     });
     dashboardWindow.setMenuBarVisibility(false);
-    // Invisible to screen shares/recordings (Zoom, Teams, VooV, OBS...):
-    // Windows renders the window black/absent in captured frames.
-    dashboardWindow.setContentProtection(settings.hideFromScreenShare);
-    dashboardWindow.loadFile(path.join(__dirname, 'dashboard', 'index.html'));
-    dashboardWindow.on('closed', () => { dashboardWindow = null; });
+    if (settings.hideFromScreenShare) {
+        dashboardWindow.setContentProtection(true);
+    }
+    const htmlPath = path.join(__dirname, 'dashboard', 'index.html');
+    log.info(`[Dashboard] Loading dashboard from ${htmlPath}`);
+    dashboardWindow.loadFile(htmlPath);
+
+    dashboardWindow.once('ready-to-show', () => {
+        log.info('[Dashboard] Window ready-to-show -> showing & focusing.');
+        if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+            dashboardWindow.show();
+            dashboardWindow.focus();
+        }
+    });
+
+    dashboardWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+        log.error(`[Dashboard] Failed to load UI (${errorCode}): ${errorDescription}`);
+    });
+
+    dashboardWindow.on('closed', () => {
+        log.info('[Dashboard] Window closed.');
+        dashboardWindow = null;
+    });
 }
 
 // ------------- tray -------------
@@ -131,6 +156,11 @@ function rebuildTrayMenu() {
     if (!tray) return;
     const meetingActive = meetings && meetings.isActive();
     const contextMenu = Menu.buildFromTemplate([
+        {
+            label: '📊 Open Scribe Dashboard',
+            click: () => createDashboard()
+        },
+        { type: 'separator' },
         {
             label: '⚡ 1-Tab Book Outlook Meeting (Ctrl+Alt+M / F9)',
             click: async () => {
@@ -240,9 +270,8 @@ if (!gotTheLock) {
     app.quit();
 } else {
     app.on('second-instance', (event, commandLine) => {
-        // A keepalive relaunch (scheduled task) just confirms we're alive —
-        // don't pop the dashboard for it. Real user launches open it.
-        if (commandLine && commandLine.includes('--keepalive')) return;
+        log.info('[App] Second instance attempted launch -> opening dashboard window.');
+        if (commandLine && Array.isArray(commandLine) && commandLine.includes('--keepalive')) return;
         createDashboard();
     });
 
@@ -256,6 +285,7 @@ if (!gotTheLock) {
             ? nativeImage.createFromPath(trayIconPath).resize({ width: 16, height: 16 })
             : nativeImage.createEmpty();
         tray = new Tray(icon);
+        tray.on('click', createDashboard);
         tray.on('double-click', createDashboard);
 
         meetings = new MeetingManager({ logsDir });
@@ -332,6 +362,17 @@ if (!gotTheLock) {
                 log.warn(`[Hotkey] Could not register Dictation ${key}:`, err.message);
             }
         });
+
+        // Register Global Hotkey to open Scribe Dashboard (Ctrl+Alt+S)
+        try {
+            const ret = globalShortcut.register('Ctrl+Alt+S', () => {
+                log.info('[Hotkey] Dashboard toggle Ctrl+Alt+S triggered!');
+                createDashboard();
+            });
+            log.info(`[Hotkey] Registered Dashboard Ctrl+Alt+S: ${ret}`);
+        } catch (err) {
+            log.warn('[Hotkey] Could not register Dashboard Ctrl+Alt+S:', err.message);
+        }
 
         // Keep the tray label in sync if a meeting is started/stopped via the API
         setInterval(rebuildTrayMenu, 10000);
