@@ -30,7 +30,7 @@ function fmt(a) {
 
 function line(level, args) {
     const msg = `[${new Date().toISOString()}] [${level}] ${args.map(fmt).join(' ')}`;
-    console.log(msg);
+    try { console.log(msg); } catch (e) { /* no console stream */ }
     if (logFile) {
         try {
             fs.appendFileSync(logFile, msg + '\n');

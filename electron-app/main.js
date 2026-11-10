@@ -29,6 +29,12 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
     try { log.error('[FATAL] Unhandled rejection (recovered):', reason); } catch (e) { /* last resort */ }
 });
+process.on('exit', (code) => {
+    try {
+        const p = path.join(app.getPath('userData'), 'logs', 'exit.log');
+        fs.appendFileSync(p, `[${new Date().toISOString()}] [EXIT] process exit code: ${code}\n`);
+    } catch (e) {}
+});
 
 const logsDir = path.join(app.getPath('userData'), 'logs');
 
@@ -75,6 +81,7 @@ let dashboardWindow = null;
 let tracker = null;
 let meetings = null;
 let dictationManager = null;
+let isQuitting = false;
 
 const trayIconPath = path.join(__dirname, 'tray-icon.png');
 
@@ -143,6 +150,15 @@ function createDashboard() {
 
     dashboardWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
         log.error(`[Dashboard] Failed to load UI (${errorCode}): ${errorDescription}`);
+    });
+
+    dashboardWindow.on('close', (event) => {
+        if (!isQuitting) {
+            event.preventDefault();
+            dashboardWindow.hide();
+            log.info('[Dashboard] Window hidden to tray on close.');
+            return false;
+        }
     });
 
     dashboardWindow.on('closed', () => {
@@ -224,7 +240,7 @@ function rebuildTrayMenu() {
         },
         { label: 'Open Logs Folder', click: () => shell.openPath(logsDir) },
         { type: 'separator' },
-        { label: 'Quit', click: () => { app.quit(); } },
+        { label: 'Quit', click: () => { isQuitting = true; app.quit(); } },
     ]);
     tray.setContextMenu(contextMenu);
     tray.setToolTip(meetingActive ? 'Scribe — recording meeting' : 'Scribe is running');
@@ -267,6 +283,10 @@ function setupMediaHandlers() {
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
+    try {
+        const p = path.join(app.getPath('userData'), 'logs', 'exit.log');
+        fs.appendFileSync(p, `[${new Date().toISOString()}] [LOCK] gotTheLock is FALSE -> app.quit() called!\n`);
+    } catch (e) {}
     app.quit();
 } else {
     app.on('second-instance', (event, commandLine) => {
@@ -380,15 +400,27 @@ if (!gotTheLock) {
 }
 
 // Background app: keep running when all windows are closed
-app.on('window-all-closed', (e) => {
-    e.preventDefault();
+app.on('window-all-closed', () => {
+    try {
+        const p = path.join(app.getPath('userData'), 'logs', 'exit.log');
+        fs.appendFileSync(p, `[${new Date().toISOString()}] [EVENT] window-all-closed fired!\n`);
+    } catch (e) {}
 });
 
 app.on('will-quit', () => {
+    try {
+        const p = path.join(app.getPath('userData'), 'logs', 'exit.log');
+        fs.appendFileSync(p, `[${new Date().toISOString()}] [EVENT] will-quit fired!\n`);
+    } catch (e) {}
     globalShortcut.unregisterAll();
 });
 
 app.on('before-quit', async () => {
+    isQuitting = true;
+    try {
+        const p = path.join(app.getPath('userData'), 'logs', 'exit.log');
+        fs.appendFileSync(p, `[${new Date().toISOString()}] [EVENT] before-quit fired!\n`);
+    } catch (e) {}
     try { if (tracker) tracker.stop(); } catch (e) { /* shutting down */ }
     try { if (meetings && meetings.isActive()) await meetings.stop(); } catch (e) { /* shutting down */ }
 });
