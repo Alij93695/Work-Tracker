@@ -1,20 +1,17 @@
 // Meeting audio capture (runs in a hidden window).
 //
-// LISTEN-ONLY: the single source is system loopback audio — everything the
-// machine is playing (the meeting audio from Zoom/Teams/VooV/Meet). The
-// microphone is never opened; nothing is recorded from or emitted into the
-// call, and the meeting apps cannot see this capture. Preferred path is
-// getDisplayMedia, which the main process answers with audio:'loopback';
-// the legacy chromeMediaSource:'desktop' path is the fallback.
+// Dual-Source Local Capture:
+// 1. System loopback audio (what the speakers/headphones play: Zoom/Teams/Meet/browser).
+// 2. Local microphone (user's speech into laptop mic).
 //
-// Audio is resampled by WebAudio at 16 kHz mono, accumulated into ~20s
-// PCM chunks, encoded as WAV, and shipped to the main process for
-// transcription. Chunks whose RMS is below the silence threshold are
-// dropped locally so silent stretches never burn API quota.
+// Both streams are mixed by WebAudio at 16 kHz mono, accumulated into ~12s
+// PCM chunks, encoded as WAV, and shipped to the main process for transcription.
+// Chunks whose RMS is below the silence threshold are dropped locally so silence
+// never wastes compute or storage.
 
-const CHUNK_SECONDS = 20;
+const CHUNK_SECONDS = 12;
 const TARGET_RATE = 16000;
-const SILENCE_RMS = 0.0015;
+const SILENCE_RMS = 0.0008;
 
 function pad(n) { return String(n).padStart(2, '0'); }
 function localTimestamp(d = new Date()) {
@@ -59,16 +56,7 @@ function bufferToBase64(buffer) {
 }
 
 async function getSystemAudio() {
-    // Preferred: getDisplayMedia — main process answers with audio:'loopback'
-    try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });
-        stream.getVideoTracks().forEach(t => t.stop());
-        if (stream.getAudioTracks().length > 0) return stream;
-        window.captureAPI.log('getDisplayMedia returned no audio track, trying legacy path...');
-    } catch (err) {
-        window.captureAPI.log('getDisplayMedia failed (' + err.message + '), trying legacy path...');
-    }
-    // Fallback: legacy desktop capture (loopback audio on Windows)
+    // 1. Try legacy desktop capture (instant on Windows with audio: loopback)
     try {
         const stream = await navigator.mediaDevices.getUserMedia({
             audio: { mandatory: { chromeMediaSource: 'desktop' } },
@@ -77,27 +65,73 @@ async function getSystemAudio() {
         stream.getVideoTracks().forEach(t => t.stop());
         if (stream.getAudioTracks().length > 0) return stream;
     } catch (err) {
-        window.captureAPI.log('Legacy desktop audio capture failed: ' + err.message);
+        window.captureAPI.log('Desktop capture via getUserMedia failed: ' + err.message);
+    }
+
+    // 2. Fallback: getDisplayMedia with quick timeout
+    try {
+        const displayPromise = navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('getDisplayMedia timeout (3s)')), 3000));
+        const stream = await Promise.race([displayPromise, timeoutPromise]);
+        stream.getVideoTracks().forEach(t => t.stop());
+        if (stream.getAudioTracks().length > 0) return stream;
+    } catch (err) {
+        window.captureAPI.log('getDisplayMedia failed: ' + err.message);
+    }
+
+    return null;
+}
+
+async function getMicAudio() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+            },
+        });
+        if (stream && stream.getAudioTracks().length > 0) return stream;
+    } catch (err) {
+        window.captureAPI.log('Microphone capture failed or unavailable: ' + err.message);
     }
     return null;
 }
 
 async function start() {
     const systemStream = await getSystemAudio();
+    const micStream = await getMicAudio();
 
     const hasSystem = !!(systemStream && systemStream.getAudioTracks().length > 0);
-    if (!hasSystem) {
-        window.captureAPI.error('Could not capture system audio.');
+    const hasMic = !!(micStream && micStream.getAudioTracks().length > 0);
+
+    if (!hasSystem && !hasMic) {
+        window.captureAPI.error('Could not capture audio: neither system loopback nor microphone is available.');
         return;
     }
 
     const ctx = new AudioContext({ sampleRate: TARGET_RATE });
+    if (ctx.state === 'suspended') {
+        await ctx.resume();
+    }
     const processor = ctx.createScriptProcessor(4096, 1, 1);
 
-    ctx.createMediaStreamSource(systemStream).connect(processor);
+    if (hasSystem) {
+        try {
+            ctx.createMediaStreamSource(systemStream).connect(processor);
+        } catch (e) {
+            window.captureAPI.log('Error routing system audio: ' + e.message);
+        }
+    }
+    if (hasMic) {
+        try {
+            ctx.createMediaStreamSource(micStream).connect(processor);
+        } catch (e) {
+            window.captureAPI.log('Error routing microphone: ' + e.message);
+        }
+    }
 
-    // ScriptProcessor only fires when routed to the destination; a zero-gain
-    // sink keeps it silent so captured system audio isn't replayed (feedback).
+    // ScriptProcessor only fires when routed to destination; zero-gain sink keeps it silent
     const sink = ctx.createGain();
     sink.gain.value = 0;
     processor.connect(sink);
@@ -144,7 +178,13 @@ async function start() {
         if (sampleCount >= TARGET_RATE * CHUNK_SECONDS) flush();
     };
 
-    window.captureAPI.started({ system: true, mic: false, sampleRate: ctx.sampleRate });
+    window.addEventListener('beforeunload', () => {
+        if (systemStream) systemStream.getTracks().forEach(t => t.stop());
+        if (micStream) micStream.getTracks().forEach(t => t.stop());
+        try { ctx.close(); } catch (e) {}
+    });
+
+    window.captureAPI.started({ system: hasSystem, mic: hasMic, sampleRate: ctx.sampleRate });
 }
 
 start().catch(err => window.captureAPI.error(err && err.message ? err.message : String(err)));

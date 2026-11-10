@@ -1564,8 +1564,8 @@ function App() {
                     <div className="transcript-box" style={{ maxHeight: '440px' }}>
                       {liveSegments.length === 0 ? (
                         <p className="hint pad">
-                          Listening to meeting audio with Local Open Whisper (mic stays off).
-                          Live transcript appears here automatically in ~20-second segments.
+                          Listening to meeting audio (system audio + microphone) with Local Open Whisper.
+                          Live transcript appears here automatically in ~12-second segments.
                         </p>
                       ) : (
                         liveSegments.map((seg, i) => (
@@ -1583,8 +1583,8 @@ function App() {
             ) : (
               <div>
                 <p className="hint intro">
-                  Capture live meeting context without inviting a bot to the call. Scribe listens to the
-                  system audio of your Zoom/Teams/VooV meeting locally on this PC (microphone stays off),
+                  Capture live meeting context without inviting a bot to the call. Scribe listens to
+                  system audio and your microphone locally on this PC,
                   transcribes with <strong>Local Open Whisper</strong>, generates live rolling notes, and creates an Executive Summary, Action Items & Follow-up Email draft when you stop.
                 </p>
 

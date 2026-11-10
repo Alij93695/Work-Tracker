@@ -2,6 +2,9 @@ const { app, Tray, Menu, nativeImage, BrowserWindow, Notification, powerMonitor,
 const path = require('path');
 const fs = require('fs');
 
+// Optimize Chromium engine for background audio capture and laptop efficiency
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
 // Load environment variables (UserOverride > ExecutableDir > BundledAsar)
 try {
     require('dotenv').config({ path: path.join(app.getPath('userData'), 'logs', '.env') });
@@ -70,7 +73,6 @@ let tray = null;
 let dashboardWindow = null;
 let tracker = null;
 let meetings = null;
-let firebaseAdd = null;
 
 const trayIconPath = path.join(__dirname, 'tray-icon.png');
 
@@ -95,26 +97,6 @@ function getPowerStatus() {
         keepAwakeActive: appSuspensionBlockerId !== null && powerSaveBlocker.isStarted(appSuspensionBlockerId),
         meetingDisplayBlocker: !!(meetings && meetings.displayBlocker !== null),
     };
-}
-
-// ------------- firebase (optional) -------------
-function initFirebase() {
-    try {
-        if (process.env.FIREBASE_API_KEY && !process.env.FIREBASE_API_KEY.includes('paste')) {
-            const { initializeApp } = require('firebase/app');
-            const { getFirestore, collection, addDoc } = require('firebase/firestore');
-            const firebaseApp = initializeApp({
-                apiKey: process.env.FIREBASE_API_KEY,
-                authDomain: process.env.FIREBASE_AUTH_DOMAIN,
-                projectId: process.env.FIREBASE_PROJECT_ID,
-            });
-            const db = getFirestore(firebaseApp);
-            firebaseAdd = (row) => addDoc(collection(db, 'logs'), row);
-            log.info('Firebase initialized successfully.');
-        }
-    } catch (error) {
-        log.error('Firebase initialization failed:', error);
-    }
 }
 
 // ------------- dashboard window -------------
@@ -229,7 +211,10 @@ function applyLoginItem() {
 // ------------- media handlers (system loopback audio for meetings) -------------
 function setupMediaHandlers() {
     session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-        callback(permission === 'media'); // mic for meeting capture; deny the rest
+        callback(permission === 'media' || permission === 'display-capture');
+    });
+    session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+        return permission === 'media' || permission === 'display-capture';
     });
     session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
         try {
@@ -263,7 +248,6 @@ if (!gotTheLock) {
         log.info(`Scribe starting (v${app.getVersion()}, packaged: ${app.isPackaged})`);
 
         ai.init();
-        initFirebase();
         setupMediaHandlers();
 
         const icon = fs.existsSync(trayIconPath)
@@ -281,7 +265,6 @@ if (!gotTheLock) {
             logsDir,
             exePath,
             powerMonitor,
-            firebaseAdd: (row) => (firebaseAdd ? firebaseAdd(row) : Promise.resolve()),
         });
         tracker.start();
 

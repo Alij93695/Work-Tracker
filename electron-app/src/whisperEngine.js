@@ -15,7 +15,7 @@ class WhisperEngine {
         this.requestId = 0;
         this.isReady = false;
         this.isStarting = false;
-        this.model = 'base'; // 'tiny', 'base', 'small'
+        this.model = 'tiny'; // 'tiny' (recommended & fast on laptop), 'base', 'small'
         this.mode = 'auto';  // 'auto', 'local', 'groq', 'openai', 'gemini'
         this.language = 'auto';
         this.lastUsed = Date.now();
@@ -69,12 +69,12 @@ class WhisperEngine {
 
         const savedSettings = readJsonSafe(this.settingsFile, {
             mode: 'auto',
-            model: 'base',
+            model: 'tiny',
             language: 'auto'
         });
 
         this.mode = savedSettings.mode || 'auto';
-        this.model = savedSettings.model || 'base';
+        this.model = savedSettings.model || 'tiny';
         this.language = savedSettings.language || 'auto';
 
         log.info(`[WhisperEngine] Initialized with mode='${this.mode}', model='${this.model}', language='${this.language}'`);
@@ -138,6 +138,11 @@ class WhisperEngine {
             });
         }
 
+        // Clean up stale process if any before spawning new one
+        if (this.workerProcess) {
+            this.cleanupWorker();
+        }
+
         this.isStarting = true;
         return new Promise((resolve, reject) => {
             try {
@@ -160,10 +165,11 @@ class WhisperEngine {
 
                 const startTimeout = setTimeout(() => {
                     if (!this.isReady) {
-                        this.isStarting = false;
-                        reject(new Error('Worker spawn timed out after 30s'));
+                        log.warn('[WhisperEngine] Worker spawn timed out after 90s, cleaning up...');
+                        this.cleanupWorker();
+                        reject(new Error('Worker spawn timed out after 90s'));
                     }
-                }, 30000);
+                }, 90000);
 
                 this.readlineInterface.on('line', (line) => {
                     const trimmed = line.trim();
@@ -180,7 +186,7 @@ class WhisperEngine {
                         }
                         if (parsed.status === 'error') {
                             clearTimeout(startTimeout);
-                            this.isStarting = false;
+                            this.cleanupWorker();
                             reject(new Error(parsed.error || 'Worker init error'));
                             return;
                         }
@@ -211,7 +217,6 @@ class WhisperEngine {
                 });
 
             } catch (err) {
-                this.isStarting = false;
                 this.cleanupWorker();
                 reject(err);
             }
@@ -226,8 +231,15 @@ class WhisperEngine {
             this.readlineInterface = null;
         }
         if (this.workerProcess) {
-            try { this.workerProcess.kill(); } catch (e) { /* ignore */ }
+            const proc = this.workerProcess;
             this.workerProcess = null;
+            try {
+                if (process.platform === 'win32' && proc.pid) {
+                    spawn('taskkill', ['/pid', String(proc.pid), '/f', '/t']);
+                } else {
+                    proc.kill('SIGKILL');
+                }
+            } catch (e) { /* ignore */ }
         }
         // Fail any pending requests
         for (const [id, handler] of this.pendingRequests.entries()) {
@@ -244,11 +256,11 @@ class WhisperEngine {
     resetIdleTimer() {
         this.lastUsed = Date.now();
         if (this.idleTimeout) clearTimeout(this.idleTimeout);
-        // Spin down worker after 15 minutes of inactivity to release memory
+        // Spin down worker after 10 minutes of inactivity to release memory and battery
         this.idleTimeout = setTimeout(() => {
-            log.info('[WhisperEngine] Idle timeout reached, spinning down local worker to conserve RAM...');
+            log.info('[WhisperEngine] Idle timeout reached, spinning down local worker to conserve RAM & battery...');
             this.cleanupWorker();
-        }, 15 * 60 * 1000);
+        }, 10 * 60 * 1000);
     }
 
     /**
@@ -271,9 +283,9 @@ class WhisperEngine {
             const timeout = setTimeout(() => {
                 if (this.pendingRequests.has(id)) {
                     this.pendingRequests.delete(id);
-                    reject(new Error('Local whisper transcription timed out (45s)'));
+                    reject(new Error('Local whisper transcription timed out (35s)'));
                 }
-            }, 45000);
+            }, 35000);
 
             this.pendingRequests.set(id, (res) => {
                 clearTimeout(timeout);
@@ -389,14 +401,20 @@ class WhisperEngine {
             }
 
             // 4. Fallback to Gemini Multimodal Audio
-            log.warn('[WhisperEngine] Falling back to Gemini Multimodal Audio pipeline...');
-            const ai = require('./ai');
-            const geminiText = await ai.transcribeAudio(audioBase64);
-            return {
-                text: (geminiText || '').replace(/\[SILENCE\]/g, '').trim(),
-                engine: 'gemini-fallback',
-                model: 'gemini-flash'
-            };
+            try {
+                log.info('[WhisperEngine] Falling back to Gemini Multimodal Audio pipeline...');
+                const ai = require('./ai');
+                if (!ai.isConfigured()) ai.init();
+                const geminiText = await ai.transcribeAudio(audioBase64);
+                return {
+                    text: (geminiText || '').replace(/\[SILENCE\]/g, '').trim(),
+                    engine: 'gemini-fallback',
+                    model: 'gemini-flash'
+                };
+            } catch (geminiErr) {
+                log.warn('[WhisperEngine] Gemini audio fallback error:', geminiErr.message);
+                return { text: '', engine: 'none' };
+            }
         }
     }
 }

@@ -23,9 +23,10 @@
 - **Smart Upcoming Scheduler**: Monitors tasks and scheduled meetings to fire native Windows desktop alerts at **15 minutes before**, **5 minutes before**, and **at start/due time**.
 - **Dashboard Alerts Panel**: Real-time countdown list (`In 12 mins`, `DUE NOW`) for all upcoming items.
 
-### 🎙️ 4. Local Meeting Capture (Listen-Only, No Bot)
-- Captures Windows **system loopback audio** (Zoom, Teams, VooV, Meet) locally. No bot ever joins call, microphone stays off.
-- Real-time Gemini transcription + automatic Markdown summaries & actionable task suggestions (added only upon user approval).
+### 🎙️ 4. Local Meeting Capture (Dual-Source, No Bot)
+- Captures Windows **system loopback audio** (Zoom, Teams, VooV, Meet) mixed with **local microphone** so both sides of the call are captured locally without any external bot joining.
+- Real-time offline **Local Open Whisper** transcription (`tiny` engine optimized for laptop efficiency with int8 quantization and 4 CPU threads) + automatic fallback to cloud/Gemini.
+- Rolling real-time meeting notes, automatic Executive Summary, Action Items matrix, and copyable follow-up email draft.
 
 ### 📊 5. Background Work Tracking & Reliability
 - Persistent native window watcher (`ActiveWindow.exe --watch`) tracks foreground applications once per second into local daily CSV logs.

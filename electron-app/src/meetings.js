@@ -34,23 +34,25 @@ class MeetingManager {
         this.liveNotesBusy = false;
         this.segmentsSinceLiveNotes = 0;
 
-        ipcMain.on('meeting:chunk', (event, payload) => this.onChunk(payload));
-        ipcMain.on('meeting:capture-started', (event, info) => {
-            this.captureInfo = info;
-            log.info('[Meeting] Capture pipeline running:', info);
-            if (this.current) {
-                this.current.capture = info;
-                this.save(this.current);
-            }
-        });
-        ipcMain.on('meeting:capture-error', (event, msg) => {
-            log.error('[Meeting] Capture error:', msg);
-            if (this.current) {
-                this.current.error = String(msg);
-                this.save(this.current);
-            }
-        });
-        ipcMain.on('meeting:capture-log', (event, msg) => log.info('[Meeting/renderer]', msg));
+        if (ipcMain) {
+            ipcMain.on('meeting:chunk', (event, payload) => this.onChunk(payload));
+            ipcMain.on('meeting:capture-started', (event, info) => {
+                this.captureInfo = info;
+                log.info('[Meeting] Capture pipeline running:', info);
+                if (this.current) {
+                    this.current.capture = info;
+                    this.save(this.current);
+                }
+            });
+            ipcMain.on('meeting:capture-error', (event, msg) => {
+                log.error('[Meeting] Capture error:', msg);
+                if (this.current) {
+                    this.current.error = String(msg);
+                    this.save(this.current);
+                }
+            });
+            ipcMain.on('meeting:capture-log', (event, msg) => log.info('[Meeting/renderer]', msg));
+        }
     }
 
     isActive() {
@@ -205,8 +207,8 @@ class MeetingManager {
                         });
 
                         this.segmentsSinceLiveNotes++;
-                        // Auto-generate rolling live notes every 4 non-empty chunks (~80s speech)
-                        if (this.segmentsSinceLiveNotes >= 4) {
+                        // Auto-generate rolling live notes every 3 non-empty chunks (~36s speech)
+                        if (this.segmentsSinceLiveNotes >= 3) {
                             this.segmentsSinceLiveNotes = 0;
                             this.generateLiveNotes(chunk.meetingId).catch(err => {
                                 log.warn('[Meeting] Rolling live notes update error:', err.message);
@@ -240,7 +242,7 @@ class MeetingManager {
      */
     async generateLiveNotes(id) {
         const meeting = (this.current && this.current.id === String(id)) ? this.current : this.load(id);
-        if (!meeting || !meeting.segments || meeting.segments.length < 2) return null;
+        if (!meeting || !meeting.segments || meeting.segments.length < 1) return null;
         if (this.liveNotesBusy) return meeting.liveNotes;
         this.liveNotesBusy = true;
 

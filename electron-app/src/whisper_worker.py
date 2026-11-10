@@ -13,12 +13,12 @@ def log_debug(msg):
     sys.stderr.flush()
 
 def main():
-    model_size = sys.argv[1] if len(sys.argv) > 1 else "base"
-    log_debug(f"Loading faster-whisper model '{model_size}' on CPU (int8)...")
+    model_size = sys.argv[1] if len(sys.argv) > 1 else "tiny"
+    log_debug(f"Loading faster-whisper model '{model_size}' on CPU (int8, 4 threads)...")
     
     try:
         from faster_whisper import WhisperModel
-        model = WhisperModel(model_size, device="cpu", compute_type="int8")
+        model = WhisperModel(model_size, device="cpu", compute_type="int8", cpu_threads=4, num_workers=1)
         log_debug(f"faster-whisper model '{model_size}' ready!")
         print(json.dumps({"status": "ready", "model": model_size}), flush=True)
     except Exception as e:
@@ -40,9 +40,9 @@ def main():
                 continue
 
             if action == "set_model":
-                new_model = req.get("model", "base")
+                new_model = req.get("model", "tiny")
                 log_debug(f"Switching faster-whisper model from '{model_size}' to '{new_model}'...")
-                model = WhisperModel(new_model, device="cpu", compute_type="int8")
+                model = WhisperModel(new_model, device="cpu", compute_type="int8", cpu_threads=4, num_workers=1)
                 model_size = new_model
                 log_debug(f"Switched model to '{model_size}'!")
                 print(json.dumps({"id": req_id, "success": True, "model": model_size}), flush=True)
@@ -62,9 +62,10 @@ def main():
 
                 t0 = time.time()
                 transcribe_kwargs = {
-                    "beam_size": 3,
+                    "beam_size": 1,
+                    "best_of": 1,
                     "vad_filter": True,
-                    "vad_parameters": dict(min_silence_duration_ms=400)
+                    "vad_parameters": dict(min_silence_duration_ms=300)
                 }
                 if initial_prompt:
                     transcribe_kwargs["initial_prompt"] = initial_prompt

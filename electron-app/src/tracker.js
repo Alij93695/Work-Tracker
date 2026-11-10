@@ -22,12 +22,10 @@ const MAX_RESPAWN_DELAY_MS = 15000;
 // respawns it with backoff if it dies or goes quiet, and Electron's
 // powerMonitor marks idle/lock/sleep periods so durations stay honest.
 class Tracker {
-    constructor({ logsDir, exePath, powerMonitor, firebaseAdd = null }) {
+    constructor({ logsDir, exePath, powerMonitor }) {
         this.logsDir = logsDir;
         this.exePath = exePath;
         this.powerMonitor = powerMonitor;
-        this.firebaseAdd = firebaseAdd;
-        this.firebaseFailures = 0;
 
         this.proc = null;
         this.stopping = false;
@@ -178,18 +176,6 @@ class Tracker {
         this.writeQueue = this.writeQueue
             .then(() => this.appendCsv(row))
             .catch(err => log.error('[Tracker] CSV write failed:', err));
-
-        if (this.firebaseAdd && this.firebaseFailures < 20) {
-            this.firebaseAdd(row).then(() => {
-                this.firebaseFailures = 0;
-            }).catch(err => {
-                this.firebaseFailures++;
-                if (this.firebaseFailures === 1 || this.firebaseFailures === 20) {
-                    log.warn(`[Tracker] Firebase sync failing (${this.firebaseFailures}x):`, err.message);
-                    if (this.firebaseFailures >= 20) log.warn('[Tracker] Firebase sync disabled until restart.');
-                }
-            });
-        }
     }
 
     appendCsv(row) {
