@@ -45,8 +45,16 @@ function App() {
   const [selectedMeeting, setSelectedMeeting] = useState(null);
   const [meetingTitle, setMeetingTitle] = useState('');
   const [meetingBusy, setMeetingBusy] = useState(false);
+  const [meetingError, setMeetingError] = useState('');
+  const [loadingMeetingId, setLoadingMeetingId] = useState(null);
+  const [showAllSegments, setShowAllSegments] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
-  const [whisperStatus, setWhisperStatus] = useState({ mode: 'auto', model: 'base', isReady: true });
+  const [whisperStatus, setWhisperStatus] = useState({ mode: 'auto', model: 'tiny', isReady: true });
+  const [isRecordingDictation, setIsRecordingDictation] = useState(false);
+  const [dictationRecordingSec, setDictationRecordingSec] = useState(0);
+  const dictationMediaRecorderRef = useRef(null);
+  const dictationTimerRef = useRef(null);
+  const dictationAudioChunksRef = useRef([]);
   const [takingLiveNotes, setTakingLiveNotes] = useState(false);
   const [liveMeetingTab, setLiveMeetingTab] = useState('split'); // 'notes' | 'transcript' | 'split'
   const [completedMeetingTab, setCompletedMeetingTab] = useState('notes'); // 'notes' | 'email' | 'transcript'
@@ -161,6 +169,65 @@ function App() {
     } finally {
       setLoadingDictation(false);
     }
+  };
+
+  const startVoiceDictationUI = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      dictationAudioChunksRef.current = [];
+      const mr = new MediaRecorder(stream);
+      dictationMediaRecorderRef.current = mr;
+
+      mr.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) dictationAudioChunksRef.current.push(e.data);
+      };
+
+      mr.start(200);
+      setIsRecordingDictation(true);
+      setDictationRecordingSec(0);
+      dictationTimerRef.current = setInterval(() => {
+        setDictationRecordingSec(s => s + 1);
+      }, 1000);
+    } catch (err) {
+      alert('Microphone access failed: ' + err.message);
+    }
+  };
+
+  const stopVoiceDictationUI = async (autoInject = true) => {
+    if (!dictationMediaRecorderRef.current) return;
+    clearInterval(dictationTimerRef.current);
+    setIsRecordingDictation(false);
+    setLoadingDictation(true);
+
+    const mr = dictationMediaRecorderRef.current;
+    mr.onstop = async () => {
+      try {
+        const blob = new Blob(dictationAudioChunksRef.current, { type: 'audio/webm' });
+        const reader = new FileReader();
+        reader.readAsDataURL(blob);
+        reader.onloadend = async () => {
+          const b64 = reader.result.split(',')[1];
+          const res = await fetch('http://localhost:3001/api/dictation/process', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ audioBase64: b64, autoInject })
+          });
+          const data = await res.json();
+          setDictationResult(data);
+          if (data.result?.raw) setDictationTestInput(data.result.raw);
+          if (autoInject && data.success) {
+            setBookingStatus({ type: 'success', message: 'Dictated & Injected: "' + (data.result?.text || '') + '"' });
+          }
+          setLoadingDictation(false);
+        };
+      } catch (err) {
+        console.error('Dictation error:', err);
+        setLoadingDictation(false);
+      }
+    };
+
+    mr.stop();
+    mr.stream.getTracks().forEach(t => t.stop());
   };
 
   const fetchUpcomingAlerts = async () => {
@@ -573,11 +640,27 @@ function App() {
   };
 
   const openMeeting = async (id) => {
+    setLoadingMeetingId(id);
+    setMeetingError('');
+    setShowAllSegments(false);
     try {
       const res = await fetch(`http://localhost:3001/api/meetings/${id}`);
-      if (res.ok) setSelectedMeeting(await res.json());
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedMeeting(data);
+        setTimeout(() => {
+          const el = document.getElementById('meeting-detail-card');
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 80);
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        setMeetingError(errJson.error || 'Failed to load meeting details.');
+      }
     } catch (err) {
       console.error('Failed to load meeting', err);
+      setMeetingError('Could not connect to meeting server.');
+    } finally {
+      setLoadingMeetingId(null);
     }
   };
 
@@ -811,6 +894,31 @@ function App() {
                 </div>
 
                 <div className="dictation-arena-box">
+                  <div className="dictation-voice-banner">
+                    <button
+                      type="button"
+                      className={`btn-voice-dictate ${isRecordingDictation ? 'recording-active' : ''}`}
+                      onClick={isRecordingDictation ? () => stopVoiceDictationUI(true) : startVoiceDictationUI}
+                      disabled={loadingDictation}
+                    >
+                      <Mic size={18} />
+                      <span>
+                        {isRecordingDictation
+                          ? `🔴 Stop & Paste into Active App (${dictationRecordingSec}s)`
+                          : '🎙️ Dictate with Voice (or press Ctrl+Alt+D)'}
+                      </span>
+                    </button>
+                    {isRecordingDictation && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary sm"
+                        onClick={() => stopVoiceDictationUI(false)}
+                      >
+                        Stop & Preview Only
+                      </button>
+                    )}
+                  </div>
+
                   <label className="field-label">Raw Spoken Speech / Input Text:</label>
                   <textarea
                     className="form-input dictation-textarea"
@@ -1589,7 +1697,7 @@ function App() {
                 </p>
 
                 {selectedMeeting && (
-                  <div className="meeting-detail">
+                  <div className="meeting-detail" id="meeting-detail-card">
                     <div className="card-head">
                       <h3>{selectedMeeting.title}</h3>
                       <div className="btn-row">
@@ -1688,12 +1796,26 @@ function App() {
                         {(selectedMeeting.segments || []).length === 0 ? (
                           <p className="hint">No transcript available.</p>
                         ) : (
-                          selectedMeeting.segments.map((seg, i) => (
-                            <div key={i} className="transcript-segment">
-                              <div className="transcript-time">{seg.start?.split('T')[1] || ''}</div>
-                              <div className="transcript-text">{seg.text}</div>
-                            </div>
-                          ))
+                          <>
+                            {(showAllSegments
+                              ? selectedMeeting.segments
+                              : (selectedMeeting.segments || []).slice(0, 100)
+                            ).map((seg, i) => (
+                              <div key={i} className="transcript-segment">
+                                <div className="transcript-time">{seg.start?.split('T')[1] || ''}</div>
+                                <div className="transcript-text">{seg.text}</div>
+                              </div>
+                            ))}
+                            {(selectedMeeting.segments || []).length > 100 && !showAllSegments && (
+                              <button
+                                className="btn btn-secondary sm"
+                                style={{ margin: '14px auto', display: 'block' }}
+                                onClick={() => setShowAllSegments(true)}
+                              >
+                                Show all {(selectedMeeting.segments || []).length} segments
+                              </button>
+                            )}
+                          </>
                         )}
                       </div>
                     )}
@@ -1729,13 +1851,19 @@ function App() {
                         key={m.id}
                         onClick={() => openMeeting(m.id)}
                         className={`meeting-row ${selectedMeeting?.id === m.id ? 'selected' : ''}`}
+                        style={{ cursor: 'pointer' }}
                       >
-                        <Mic size={15} className="meeting-row-icon" />
+                        {loadingMeetingId === m.id ? (
+                          <RefreshCw size={15} className="spin meeting-row-icon" />
+                        ) : (
+                          <Mic size={15} className="meeting-row-icon" />
+                        )}
                         <span className="meeting-row-main">
                           {m.title}
                           <span className="hint small">
                             {formatMeetingTime(m.startedAt)} · {m.segmentCount} segment(s)
                             {m.hasSummary ? ' · summarized' : ''}
+                            {loadingMeetingId === m.id ? ' · Loading details…' : ''}
                           </span>
                         </span>
                         <button

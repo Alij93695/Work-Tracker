@@ -56,7 +56,7 @@ async function injectText(text, { restoreClipboard = true } = {}) {
                     } catch (e) {
                         /* ignore */
                     }
-                }, 250);
+                }, 600);
             }
 
             resolve({ success: true, injectedLength: text.length });

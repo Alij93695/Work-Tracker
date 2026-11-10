@@ -18,6 +18,7 @@ const log = require('./src/logger');
 const ai = require('./src/ai');
 const { Tracker } = require('./src/tracker');
 const { MeetingManager } = require('./src/meetings');
+const { DictationManager } = require('./src/dictationManager');
 const { startApiServer } = require('./src/apiServer');
 const { readJsonSafe, writeJsonSafe } = require('./src/util');
 
@@ -73,6 +74,7 @@ let tray = null;
 let dashboardWindow = null;
 let tracker = null;
 let meetings = null;
+let dictationManager = null;
 
 const trayIconPath = path.join(__dirname, 'tray-icon.png');
 
@@ -257,6 +259,7 @@ if (!gotTheLock) {
         tray.on('double-click', createDashboard);
 
         meetings = new MeetingManager({ logsDir });
+        dictationManager = new DictationManager({ trayIconPath, logsDir });
 
         const exePath = app.isPackaged
             ? path.join(process.resourcesPath, 'ActiveWindow.exe')
@@ -318,15 +321,11 @@ if (!gotTheLock) {
         const dictationKeys = ['Ctrl+Alt+D', 'Alt+D'];
         dictationKeys.forEach(key => {
             try {
-                const ret = globalShortcut.register(key, async () => {
+                const ret = globalShortcut.register(key, () => {
                     log.info(`[Hotkey] Universal Dictation ${key} triggered!`);
-                    try {
-                        new Notification({
-                            title: `🎙 Universal Voice Dictation (${key})`,
-                            body: 'Universal text injection active. Open dashboard tab to test or dictate.',
-                            icon: trayIconPath
-                        }).show();
-                    } catch (e) { /* ignore */ }
+                    if (dictationManager) {
+                        dictationManager.toggle();
+                    }
                 });
                 log.info(`[Hotkey] Registered Dictation ${key}: ${ret}`);
             } catch (err) {

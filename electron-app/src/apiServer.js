@@ -20,7 +20,8 @@ const PORT = 3001;
 function startApiServer({ logsDir, tracker, meetings, getPowerStatus, trayIconPath, createDashboard }) {
     const apiApp = express();
     apiApp.use(cors());
-    apiApp.use(express.json({ limit: '5mb' }));
+    apiApp.use(express.json({ limit: '25mb' }));
+    apiApp.use(express.urlencoded({ limit: '25mb', extended: true }));
 
     const reminderEngine = new ReminderEngine({ logsDir, trayIconPath });
     reminderEngine.start();
